@@ -345,7 +345,7 @@ impl SessionManager {
                 _ => return Err(SessionError::NotConnected(session_id)),
             }
         }
-        self.active_by_device.remove(&device_id);
+        self.active_by_device.insert(device_id, session_id);
         Ok(())
     }
 
@@ -425,7 +425,7 @@ impl SessionManager {
                         snapshot.status = SessionStatus::Disconnected;
                         snapshot.state_changed_at = now;
                         snapshot.disconnect_reason = Some(DisconnectReason::HeartbeatTimeout);
-                        self.active_by_device.remove(&snapshot.device_id);
+                        self.active_by_device.insert(snapshot.device_id, session_id);
                         report.heartbeat_timeouts.push(session_id);
                     }
                 }
@@ -538,6 +538,26 @@ mod tests {
                 .get(first.session_id)
                 .expect("old session")
                 .termination_reason(),
+            Some(TerminationReason::Duplicate)
+        );
+    }
+
+    #[test]
+    fn duplicate_start_also_supersedes_a_resumable_disconnect() {
+        let mut manager = SessionManager::new(SessionConfig::new(100, 50, 500));
+        let device = DeviceId::new(10);
+        let first = manager
+            .start_session(device, time(0))
+            .expect("first")
+            .session_id;
+        manager.disconnect(first, time(1)).expect("disconnect");
+
+        let second = manager.start_session(device, time(2)).expect("second");
+
+        assert_eq!(second.superseded, Some(first));
+        assert_eq!(manager.active_session(device), Some(second.session_id));
+        assert_eq!(
+            manager.get(first).expect("old session").termination_reason(),
             Some(TerminationReason::Duplicate)
         );
     }
