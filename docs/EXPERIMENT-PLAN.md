@@ -110,7 +110,29 @@ The current Rust tests do not measure latency. A protocol round trip or a log
 timestamp is not motion-to-photon evidence, and no latency claim may be made
 until the camera artifact and environment sheet exist.
 
-## 4. Reliability and security runs
+## 4. Week-1 kill-switch harness
+
+The repository includes `experiments/wkwebview-webrtc/`, a dependency-free
+macOS AppKit probe for the Tauri/WKWebView route. It runs a real local
+`RTCPeerConnection` loopback inside a `WKWebView`, records frame callbacks,
+inbound WebRTC statistics, scripted/manual input samples, and native process
+CPU/memory samples. It is deliberately not a product shell and does not prove
+Android capture, a real network, glass-to-glass latency, or production hardware
+decode.
+
+On a macOS host with Command Line Tools and a logged-in WindowServer session:
+
+```sh
+cd experiments/wkwebview-webrtc
+bash build.sh
+bash run.sh --duration-seconds 30 --output results/wkwebview-loopback.json
+```
+
+If macOS execution is unavailable, record the macOS-specific result as
+**NOT TESTED**. Do not infer a route decision from source inspection or a Linux
+build. The harness README defines its evidence gates and report limitations.
+
+## 5. Reliability and security runs
 
 ### Lifecycle run
 
@@ -131,7 +153,7 @@ security provider, denied Android/macOS permission, malformed frame, oversized
 payload, and unauthorized capability. The current exact-byte fixtures can
 support deterministic core tests only; they cannot pass this run.
 
-## 5. Deliverables and decision packet
+## 6. Deliverables and decision packet
 
 At Day 15, retain these artifacts under the project’s agreed evidence location
 or link them from the review record:

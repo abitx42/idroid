@@ -110,6 +110,11 @@ The scaffold READMEs under `apps/`, `core/`, `tests/`, and `benchmarks/` state
 the owner and acceptance criteria for these future boundaries without claiming
 that implementation exists.
 
+The first WKWebView kill-switch harness is also present under
+`experiments/wkwebview-webrtc/`. It is a macOS-only, local-loopback feasibility
+probe. Its report is **NOT TESTED** until it is actually built and run on a
+logged-in macOS host; it is not a product application or a cross-device result.
+
 ## Deploy status
 
 **Not deployable yet.** There is no application binary, service, APK, signed

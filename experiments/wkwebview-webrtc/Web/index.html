@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>iDroid WKWebView WebRTC probe</title>
+  <style>
+    :root { color-scheme: dark; font: 15px -apple-system, BlinkMacSystemFont, sans-serif; }
+    body { margin: 0; padding: 24px; background: #101114; color: #f5f5f7; }
+    main { max-width: 980px; margin: 0 auto; }
+    h1 { font-size: 24px; font-weight: 650; }
+    p { color: #a8a8b0; }
+    #status { padding: 10px 12px; border-radius: 10px; background: #202126; }
+    video { display: block; width: min(100%, 900px); aspect-ratio: 16 / 9; background: #050505; border-radius: 14px; }
+    #input-target { margin-top: 16px; padding: 20px; border: 1px solid #3b3d47; border-radius: 12px; outline: none; }
+    #input-target:focus { border-color: #6e9eff; }
+    code { color: #a9c7ff; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>WKWebView WebRTC feasibility probe</h1>
+  <p>This is a local loopback. It is not an Android or network measurement.</p>
+  <div id="status">Waiting for native probe…</div>
+  <video id="remote" autoplay playsinline></video>
+  <div id="input-target" tabindex="0">Input target — click or type here for manual samples.</div>
+</main>
+<script>
+(() => {
+  const status = document.getElementById('status');
+  const video = document.getElementById('remote');
+  const target = document.getElementById('input-target');
+  let startTime = 0;
+  let firstFrameMs = null;
+  let callbackCount = 0;
+  let presentedRepeats = 0;
+  let nonMonotonic = 0;
+  let lastPresented = -1;
+  let sourceFrames = 0;
+  let sourceCanvas;
+  let sourceStream;
+  let inboundPeer;
+  let outboundPeer;
+  const scripted = [];
+  const manual = [];
+
+  function send(body) {
+    if (window.webkit?.messageHandlers?.probe) {
+      window.webkit.messageHandlers.probe.postMessage(body);
+    }
+  }
+
+  function setStatus(value) { status.textContent = value; }
+
+  function percentile(values, p) {
+    if (!values.length) return null;
+    const sorted = values.slice().sort((a, b) => a - b);
+    const index = Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * p));
+    return sorted[index];
+  }
+
+  function recordInput(collection, kind) {
+    const sent = performance.now();
+    requestAnimationFrame(() => {
+      collection.push({ kind, responseMs: performance.now() - sent });
+    });
+  }
+
+  function drawSource(context, width, height) {
+    const now = performance.now();
+    context.fillStyle = '#17181c';
+    context.fillRect(0, 0, width, height);
+    const x = (now * 0.15) % width;
+    context.fillStyle = '#6e9eff';
+    context.fillRect(x, 80, 120, 120);
+    context.fillStyle = '#f5f5f7';
+    context.font = '32px -apple-system, sans-serif';
+    context.fillText(String(Math.floor(now)), 30, height - 40);
+    sourceFrames += 1;
+    requestAnimationFrame(() => drawSource(context, width, height));
+  }
+
+  function onVideoFrame(_now, metadata) {
+    callbackCount += 1;
+    if (firstFrameMs === null) firstFrameMs = performance.now() - startTime;
+    const presented = Number(metadata.presentedFrames ?? callbackCount);
+    if (presented <= lastPresented) nonMonotonic += 1;
+    if (presented === lastPresented) presentedRepeats += 1;
+    lastPresented = presented;
+    video.requestVideoFrameCallback(onVideoFrame);
+  }
+
+  async function collectStats() {
+    const stats = {};
+    for (const report of [outboundPeer, inboundPeer]) {
+      if (!report) continue;
+      for (const item of await report.getStats()) {
+        if (item.type === 'inbound-rtp' && item.kind === 'video') {
+          stats.inbound = {
+            framesDecoded: item.framesDecoded ?? null,
+            framesReceived: item.framesReceived ?? null,
+            framesDropped: item.framesDropped ?? null,
+            decoderImplementation: item.decoderImplementation ?? null,
+            powerEfficient: item.powerEfficient ?? null,
+            codecId: item.codecId ?? null,
+            totalDecodeTime: item.totalDecodeTime ?? null
+          };
+        }
+        if (item.type === 'codec' && item.mimeType?.startsWith('video/')) {
+          stats.codec = { mimeType: item.mimeType, codec: item.codec ?? null, payloadType: item.payloadType ?? null };
+        }
+      }
+    }
+    return stats;
+  }
+
+  async function run(durationSeconds) {
+    try {
+      startTime = performance.now();
+      const width = 640, height = 360;
+      sourceCanvas = document.createElement('canvas');
+      sourceCanvas.width = width; sourceCanvas.height = height;
+      const context = sourceCanvas.getContext('2d');
+      sourceStream = sourceCanvas.captureStream(30);
+      outboundPeer = new RTCPeerConnection({ iceServers: [] });
+      inboundPeer = new RTCPeerConnection({ iceServers: [] });
+      inboundPeer.ontrack = event => {
+        video.srcObject = event.streams[0];
+        video.play().catch(error => send({ type: 'error', error: `video.play failed: ${error}` }));
+        if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(onVideoFrame);
+      };
+      for (const track of sourceStream.getTracks()) outboundPeer.addTrack(track, sourceStream);
+      outboundPeer.onicecandidate = event => event.candidate && inboundPeer.addIceCandidate(event.candidate).catch(() => {});
+      inboundPeer.onicecandidate = event => event.candidate && outboundPeer.addIceCandidate(event.candidate).catch(() => {});
+      const offer = await outboundPeer.createOffer();
+      await outboundPeer.setLocalDescription(offer);
+      await inboundPeer.setRemoteDescription(offer);
+      const answer = await inboundPeer.createAnswer();
+      await inboundPeer.setLocalDescription(answer);
+      await outboundPeer.setRemoteDescription(answer);
+      requestAnimationFrame(() => drawSource(context, width, height));
+      setStatus('WebRTC loopback connected; collecting frame and input evidence…');
+      send({ type: 'started' });
+
+      const startedAt = performance.now();
+      while (performance.now() - startedAt < durationSeconds * 1000) {
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
+      const stats = await collectStats();
+      const responses = [...scripted, ...manual].map(sample => sample.responseMs);
+      send({ type: 'result', status: 'COMPLETED', result: {
+        userAgent: navigator.userAgent,
+        requestVideoFrameCallback: typeof video.requestVideoFrameCallback === 'function',
+        readyState: video.readyState,
+        firstFrameMs,
+        callbackCount,
+        presentedRepeats,
+        nonMonotonic,
+        sourceFrames,
+        input: {
+          scriptedCount: scripted.length,
+          manualCount: manual.length,
+          p50Ms: percentile(responses, 0.50),
+          p95Ms: percentile(responses, 0.95),
+          maxMs: responses.length ? Math.max(...responses) : null
+        },
+        stats
+      }});
+    } catch (error) {
+      send({ type: 'error', error: String(error?.stack || error) });
+    }
+  }
+
+  target.addEventListener('click', () => recordInput(manual, 'click'));
+  target.addEventListener('keydown', () => recordInput(manual, 'key'));
+  window.startProbe = durationSeconds => {
+    for (let i = 0; i < 100; i += 1) setTimeout(() => recordInput(scripted, 'scripted'), i * 20);
+    run(durationSeconds);
+  };
+})();
+</script>
+</body>
+</html>
