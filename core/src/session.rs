@@ -38,7 +38,11 @@ pub struct SessionConfig {
 }
 
 impl SessionConfig {
-    pub const fn new(heartbeat_timeout_ms: u64, reconnect_grace_ms: u64, stale_after_ms: u64) -> Self {
+    pub const fn new(
+        heartbeat_timeout_ms: u64,
+        reconnect_grace_ms: u64,
+        stale_after_ms: u64,
+    ) -> Self {
         Self {
             heartbeat_timeout_ms,
             reconnect_grace_ms,
@@ -229,17 +233,26 @@ impl fmt::Display for SessionError {
             Self::InvalidSessionId => formatter.write_str("session identifiers must be non-zero"),
             Self::UnknownSession(id) => write!(formatter, "unknown session {id}"),
             Self::IdExhausted => formatter.write_str("session identifier space exhausted"),
-            Self::AlreadyDisconnected(id) => write!(formatter, "session {id} is already disconnected"),
+            Self::AlreadyDisconnected(id) => {
+                write!(formatter, "session {id} is already disconnected")
+            }
             Self::NotConnected(id) => write!(formatter, "session {id} is not connected"),
-            Self::NotDisconnected(id) => write!(formatter, "session {id} is not temporarily disconnected"),
+            Self::NotDisconnected(id) => {
+                write!(formatter, "session {id} is not temporarily disconnected")
+            }
             Self::AlreadyOffline(id) => write!(formatter, "session {id} is already offline"),
             Self::AlreadyTerminated(id) => write!(formatter, "session {id} is already terminated"),
-            Self::ReconnectWindowExpired(id) => write!(formatter, "reconnect window expired for session {id}"),
+            Self::ReconnectWindowExpired(id) => {
+                write!(formatter, "reconnect window expired for session {id}")
+            }
             Self::ClockRewound {
                 session_id,
                 last,
                 now,
-            } => write!(formatter, "clock moved backwards for session {session_id}: {now:?} before {last:?}"),
+            } => write!(
+                formatter,
+                "clock moved backwards for session {session_id}: {now:?} before {last:?}"
+            ),
         }
     }
 }
@@ -273,7 +286,11 @@ impl SessionManager {
         self.config
     }
 
-    pub fn start_session(&mut self, device_id: DeviceId, now: Timestamp) -> Result<SessionStart, SessionError> {
+    pub fn start_session(
+        &mut self,
+        device_id: DeviceId,
+        now: Timestamp,
+    ) -> Result<SessionStart, SessionError> {
         if !device_id.is_valid() {
             return Err(SessionError::InvalidDeviceId);
         }
@@ -304,7 +321,9 @@ impl SessionManager {
     }
 
     pub fn get(&self, session_id: SessionId) -> Option<&SessionSnapshot> {
-        self.sessions.get(&session_id).map(|record| &record.snapshot)
+        self.sessions
+            .get(&session_id)
+            .map(|record| &record.snapshot)
     }
 
     pub fn active_session(&self, device_id: DeviceId) -> Option<SessionId> {
@@ -329,7 +348,11 @@ impl SessionManager {
         Ok(())
     }
 
-    pub fn disconnect(&mut self, session_id: SessionId, now: Timestamp) -> Result<(), SessionError> {
+    pub fn disconnect(
+        &mut self,
+        session_id: SessionId,
+        now: Timestamp,
+    ) -> Result<(), SessionError> {
         let device_id;
         {
             let record = self.record_mut(session_id)?;
@@ -341,7 +364,9 @@ impl SessionManager {
                     record.snapshot.disconnect_reason = Some(DisconnectReason::Requested);
                     device_id = record.snapshot.device_id;
                 }
-                SessionStatus::Disconnected => return Err(SessionError::AlreadyDisconnected(session_id)),
+                SessionStatus::Disconnected => {
+                    return Err(SessionError::AlreadyDisconnected(session_id))
+                }
                 _ => return Err(SessionError::NotConnected(session_id)),
             }
         }
@@ -377,7 +402,11 @@ impl SessionManager {
         Err(SessionError::ReconnectWindowExpired(session_id))
     }
 
-    pub fn mark_offline(&mut self, session_id: SessionId, now: Timestamp) -> Result<(), SessionError> {
+    pub fn mark_offline(
+        &mut self,
+        session_id: SessionId,
+        now: Timestamp,
+    ) -> Result<(), SessionError> {
         let device_id;
         {
             let record = self.record_mut(session_id)?;
@@ -389,7 +418,9 @@ impl SessionManager {
                     device_id = record.snapshot.device_id;
                 }
                 SessionStatus::Offline => return Err(SessionError::AlreadyOffline(session_id)),
-                SessionStatus::Terminated => return Err(SessionError::AlreadyTerminated(session_id)),
+                SessionStatus::Terminated => {
+                    return Err(SessionError::AlreadyTerminated(session_id))
+                }
             }
         }
         self.active_by_device.remove(&device_id);
@@ -502,7 +533,11 @@ fn elapsed(now: Timestamp, then: Timestamp) -> Option<u64> {
     now.as_millis().checked_sub(then.as_millis())
 }
 
-fn ensure_forward(session_id: SessionId, last: Timestamp, now: Timestamp) -> Result<(), SessionError> {
+fn ensure_forward(
+    session_id: SessionId,
+    last: Timestamp,
+    now: Timestamp,
+) -> Result<(), SessionError> {
     if now < last {
         Err(SessionError::ClockRewound {
             session_id,
@@ -532,7 +567,10 @@ mod tests {
         assert_ne!(first.session_id, second.session_id);
         assert_eq!(second.superseded, Some(first.session_id));
         assert_eq!(manager.active_session(device), Some(second.session_id));
-        assert_eq!(manager.get(first.session_id).expect("old session").status(), SessionStatus::Terminated);
+        assert_eq!(
+            manager.get(first.session_id).expect("old session").status(),
+            SessionStatus::Terminated
+        );
         assert_eq!(
             manager
                 .get(first.session_id)
@@ -557,7 +595,10 @@ mod tests {
         assert_eq!(second.superseded, Some(first));
         assert_eq!(manager.active_session(device), Some(second.session_id));
         assert_eq!(
-            manager.get(first).expect("old session").termination_reason(),
+            manager
+                .get(first)
+                .expect("old session")
+                .termination_reason(),
             Some(TerminationReason::Duplicate)
         );
     }
@@ -573,14 +614,23 @@ mod tests {
         assert!(manager.sweep(time(9)).is_empty());
         let timeout = manager.sweep(time(10));
         assert_eq!(timeout.heartbeat_timeouts, vec![id]);
-        assert_eq!(manager.get(id).expect("session").status(), SessionStatus::Disconnected);
+        assert_eq!(
+            manager.get(id).expect("session").status(),
+            SessionStatus::Disconnected
+        );
 
         manager.reconnect(id, time(20)).expect("within grace");
         manager.disconnect(id, time(21)).expect("disconnect");
         let offline = manager.sweep(time(41));
         assert_eq!(offline.offline_sessions, vec![id]);
-        assert_eq!(manager.get(id).expect("session").status(), SessionStatus::Offline);
-        assert_eq!(manager.reconnect(id, time(42)), Err(SessionError::NotDisconnected(id)));
+        assert_eq!(
+            manager.get(id).expect("session").status(),
+            SessionStatus::Offline
+        );
+        assert_eq!(
+            manager.reconnect(id, time(42)),
+            Err(SessionError::NotDisconnected(id))
+        );
 
         let removed = manager.sweep(time(71));
         assert_eq!(removed.removed_stale, vec![id]);
@@ -598,8 +648,14 @@ mod tests {
         manager
             .terminate(id, time(101), TerminationReason::Requested)
             .expect("terminate");
-        assert_eq!(manager.heartbeat(id, time(102)), Err(SessionError::NotConnected(id)));
-        assert_eq!(manager.reconnect(id, time(102)), Err(SessionError::NotDisconnected(id)));
+        assert_eq!(
+            manager.heartbeat(id, time(102)),
+            Err(SessionError::NotConnected(id))
+        );
+        assert_eq!(
+            manager.reconnect(id, time(102)),
+            Err(SessionError::NotDisconnected(id))
+        );
         assert_eq!(
             manager.terminate(id, time(103), TerminationReason::Requested),
             Err(SessionError::AlreadyTerminated(id))

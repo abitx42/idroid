@@ -2,8 +2,10 @@ use idroid_core::security::{
     FixtureIdentityVerifier, FixtureMessageAuthenticator, IdentityVerifier, MessageAuthenticator,
 };
 use idroid_core::{
-    DeviceCapabilities, DeviceId, DeviceKind, DeviceProfile, DeviceRegistry, MessageBody, ProtocolError,
-    ProtocolMessage, SessionConfig, SessionId, SessionManager, SessionStatus, TerminationReason, Timestamp,
+    CaptureState, DeviceCapabilities, DeviceId, DeviceKind, DeviceProfile, DeviceRegistry,
+    DeviceStatus, ErrorCode, KeyAction, MessageBody, MessageKind, PermissionKind, ProtocolError,
+    ProtocolMessage, SessionConfig, SessionId, SessionManager, SessionStatus, TerminationReason,
+    Timestamp,
 };
 
 fn at(milliseconds: u64) -> Timestamp {
@@ -23,14 +25,30 @@ fn device_and_session_dimensions_remain_independent() {
     devices.register(profile).expect("register device");
 
     let mut sessions = SessionManager::new(SessionConfig::new(100, 50, 500));
-    let first = sessions.start_session(device_id, at(0)).expect("first session");
-    let second = sessions.start_session(device_id, at(1)).expect("replacement session");
+    let first = sessions
+        .start_session(device_id, at(0))
+        .expect("first session");
+    let second = sessions
+        .start_session(device_id, at(1))
+        .expect("replacement session");
 
-    assert_eq!(devices.get(device_id).expect("device").kind(), DeviceKind::Phone);
-    assert_ne!(first.session_id, second.session_id);
-    assert_eq!(sessions.get(second.session_id).expect("session").device_id(), device_id);
     assert_eq!(
-        sessions.get(first.session_id).expect("superseded session").termination_reason(),
+        devices.get(device_id).expect("device").kind(),
+        DeviceKind::Phone
+    );
+    assert_ne!(first.session_id, second.session_id);
+    assert_eq!(
+        sessions
+            .get(second.session_id)
+            .expect("session")
+            .device_id(),
+        device_id
+    );
+    assert_eq!(
+        sessions
+            .get(first.session_id)
+            .expect("superseded session")
+            .termination_reason(),
         Some(TerminationReason::Duplicate)
     );
 }
@@ -66,6 +84,79 @@ fn protocol_round_trip_and_malformed_input_are_observable() {
 }
 
 #[test]
+fn every_extended_protocol_kind_round_trips_through_the_public_api() {
+    let cases = vec![
+        MessageBody::PairingInitiation {
+            device_id: DeviceId::new(7),
+            nonce: vec![1, 2, 3],
+        },
+        MessageBody::PairingCompletion {
+            device_id: DeviceId::new(7),
+            accepted: true,
+        },
+        MessageBody::SessionEstablishment {
+            device_id: DeviceId::new(7),
+            session_id: SessionId::new(8),
+        },
+        MessageBody::DeviceStatus {
+            device_id: DeviceId::new(7),
+            status: DeviceStatus::Online,
+            capabilities: 0x03,
+        },
+        MessageBody::Terminate {
+            session_id: SessionId::new(8),
+            reason: TerminationReason::Requested,
+        },
+        MessageBody::Reconnect {
+            session_id: SessionId::new(8),
+        },
+        MessageBody::TapInput {
+            session_id: SessionId::new(8),
+            x: 10,
+            y: 20,
+        },
+        MessageBody::PointerMovement {
+            session_id: SessionId::new(8),
+            x: -2,
+            y: 4,
+        },
+        MessageBody::KeyboardInput {
+            session_id: SessionId::new(8),
+            key_code: 30,
+            action: KeyAction::Press,
+            modifiers: 0,
+        },
+        MessageBody::PermissionChange {
+            device_id: DeviceId::new(7),
+            permission: PermissionKind::ScreenCapture,
+            granted: true,
+        },
+        MessageBody::CaptureState {
+            session_id: SessionId::new(8),
+            state: CaptureState::Active,
+        },
+        MessageBody::Error {
+            session_id: Some(SessionId::new(8)),
+            code: ErrorCode::PermissionDenied,
+            message: "permission denied".to_owned(),
+        },
+    ];
+
+    for body in cases {
+        let expected_kind = body.kind();
+        let message = ProtocolMessage::new(body).expect("valid message");
+        assert_eq!(message.kind(), expected_kind);
+        let frame = message.encode().expect("encode");
+        assert_eq!(frame[5], expected_kind.as_u8());
+        assert_eq!(ProtocolMessage::decode(&frame).expect("decode"), message);
+    }
+
+    assert_eq!(MessageKind::PairingInit, MessageKind::PairingInitiation);
+    assert_eq!(MessageKind::SessionTermination, MessageKind::Terminate);
+    assert_eq!(MessageKind::SessionReconnection, MessageKind::Reconnect);
+}
+
+#[test]
 fn lifecycle_supports_temporary_reconnect_and_offline_termination() {
     let mut manager = SessionManager::new(SessionConfig::new(10, 20, 30));
     let session_id = manager
@@ -78,15 +169,25 @@ fn lifecycle_supports_temporary_reconnect_and_offline_termination() {
         manager.get(session_id).expect("timed out").status(),
         SessionStatus::Disconnected
     );
-    manager.reconnect(session_id, at(20)).expect("reconnect in grace");
-    manager.disconnect(session_id, at(21)).expect("temporary disconnect");
+    manager
+        .reconnect(session_id, at(20))
+        .expect("reconnect in grace");
+    manager
+        .disconnect(session_id, at(21))
+        .expect("temporary disconnect");
     manager.sweep(at(41));
-    assert_eq!(manager.get(session_id).expect("offline").status(), SessionStatus::Offline);
+    assert_eq!(
+        manager.get(session_id).expect("offline").status(),
+        SessionStatus::Offline
+    );
 
     manager
         .terminate(session_id, at(42), TerminationReason::Requested)
         .expect("terminate offline session");
-    assert_eq!(manager.get(session_id).expect("terminated").status(), SessionStatus::Terminated);
+    assert_eq!(
+        manager.get(session_id).expect("terminated").status(),
+        SessionStatus::Terminated
+    );
     assert!(manager.sweep(at(72)).removed_stale.contains(&session_id));
 }
 
@@ -104,5 +205,7 @@ fn security_is_injected_and_fixtures_are_not_crypto_claims() {
     );
 
     let message_authenticator = FixtureMessageAuthenticator::new(b"test-tag".to_vec());
-    assert!(message_authenticator.verify_message(b"opaque message", b"test-tag").is_ok());
+    assert!(message_authenticator
+        .verify_message(b"opaque message", b"test-tag")
+        .is_ok());
 }

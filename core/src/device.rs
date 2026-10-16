@@ -50,7 +50,11 @@ pub struct DeviceProfile {
 }
 
 impl DeviceProfile {
-    pub fn new(id: DeviceId, kind: DeviceKind, capabilities: DeviceCapabilities) -> Result<Self, DeviceError> {
+    pub fn new(
+        id: DeviceId,
+        kind: DeviceKind,
+        capabilities: DeviceCapabilities,
+    ) -> Result<Self, DeviceError> {
         if !id.is_valid() {
             return Err(DeviceError::InvalidId);
         }
@@ -139,11 +143,15 @@ mod tests {
         .expect("valid device");
         let mut registry = DeviceRegistry::default();
 
-        registry.register(profile.clone()).expect("first registration");
+        registry
+            .register(profile.clone())
+            .expect("first registration");
 
         assert_eq!(registry.get(id), Some(&profile));
         assert_eq!(registry.len(), 1);
         assert!(profile.capabilities().contains(DeviceCapabilities::DISPLAY));
-        assert!(!profile.capabilities().contains(DeviceCapabilities::FILE_TRANSFER));
+        assert!(!profile
+            .capabilities()
+            .contains(DeviceCapabilities::FILE_TRANSFER));
     }
 }
