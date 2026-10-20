@@ -75,9 +75,11 @@ private final class ProbeDelegate: NSObject, NSApplicationDelegate, NSWindowDele
     private var sampleTimer: Timer?
     private var timeoutWorkItem: DispatchWorkItem?
     private var samples: [[String: Any]] = []
+    private var webKitProcessSamples: [[[String: Any]]] = []
     private var previousUsage: TaskUsage?
     private var previousSampleDate: Date?
     private var runStartedAt: Date?
+    private var baselineProcessIDs: Set<Int> = []
     private var finished = false
 
     init(options: Options) {
@@ -112,6 +114,7 @@ private final class ProbeDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         newWindow.makeKeyAndOrderFront(nil)
         window = newWindow
         NSApp.activate(ignoringOtherApps: true)
+        baselineProcessIDs = allProcessIDs()
 
         guard FileManager.default.fileExists(atPath: options.htmlURL.path) else {
             finish(status: "NOT_TESTED", error: "HTML file does not exist: \(options.htmlURL.path)")
@@ -221,6 +224,7 @@ private final class ProbeDelegate: NSObject, NSApplicationDelegate, NSWindowDele
             sample["cpuPercent"] = NSNull()
         }
         samples.append(sample)
+        webKitProcessSamples.append(relevantWebKitProcesses(excluding: baselineProcessIDs))
         previousUsage = usage
         previousSampleDate = now
     }
@@ -246,6 +250,9 @@ private final class ProbeDelegate: NSObject, NSApplicationDelegate, NSWindowDele
             ],
             "environmentRecord": readText(at: options.environmentURL),
             "processSamples": samples,
+            "webKitProcessSamples": webKitProcessSamples,
+            "webKitProcessBaselineCount": baselineProcessIDs.count,
+            "resourceMeasurementLimits": "processSamples cover this native host; webKitProcessSamples are best-effort baseline-delta ps matches for WebKit/WebContent/GPU names and are not a complete whole-application attribution",
             "webview": pageResult,
         ]
         if let error {
@@ -281,6 +288,78 @@ private func currentTaskUsage() -> TaskUsage? {
     let user = Double(info.user_time.seconds) + Double(info.user_time.microseconds) / 1_000_000
     let system = Double(info.system_time.seconds) + Double(info.system_time.microseconds) / 1_000_000
     return TaskUsage(cpuSeconds: user + system, residentBytes: UInt64(info.resident_size))
+}
+
+private func allProcessIDs() -> Set<Int> {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/ps")
+    process.arguments = ["-axo", "pid="]
+    let output = Pipe()
+    process.standardOutput = output
+    process.standardError = FileHandle.nullDevice
+
+    do {
+        try process.run()
+    } catch {
+        return []
+    }
+
+    let data = output.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    guard let text = String(data: data, encoding: .utf8) else { return [] }
+    return Set(text.split(whereSeparator: \.isNewline).compactMap { Int($0.trimmingCharacters(in: .whitespaces)) })
+}
+
+private func relevantWebKitProcesses(excluding baselineProcessIDs: Set<Int>) -> [[String: Any]] {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/ps")
+    process.arguments = ["-axo", "pid=,ppid=,%cpu=,rss=,comm=,args="]
+    let output = Pipe()
+    process.standardOutput = output
+    process.standardError = FileHandle.nullDevice
+
+    do {
+        try process.run()
+    } catch {
+        return []
+    }
+
+    let data = output.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    guard let text = String(data: data, encoding: .utf8) else { return [] }
+
+    return text.split(whereSeparator: \.isNewline).compactMap { line in
+        let fields = line.split(
+            maxSplits: 5,
+            omittingEmptySubsequences: true,
+            whereSeparator: { $0 == " " || $0 == "\t" }
+        )
+        guard fields.count >= 5,
+              let pid = Int(fields[0]),
+              let parentPid = Int(fields[1]),
+              let cpuPercent = Double(fields[2]),
+              let residentKilobytes = Int(fields[3]) else {
+            return nil
+        }
+
+        guard !baselineProcessIDs.contains(pid) else { return nil }
+
+        let command = String(fields[4])
+        let arguments = fields.count == 6 ? String(fields[5]) : ""
+        let searchable = "\(command) \(arguments)".lowercased()
+        guard searchable.contains("webkit") || searchable.contains("webcontent") || searchable.contains("gpu") else {
+            return nil
+        }
+
+        return [
+            "pid": pid,
+            "parentPid": parentPid,
+            "cpuPercent": cpuPercent,
+            "residentKilobytes": residentKilobytes,
+            "command": command,
+            "arguments": arguments,
+        ]
+    }
 }
 
 private func readText(at url: URL) -> String {

@@ -4,8 +4,10 @@
 
 This repository is at the **portable Rust core foundation** milestone. The
 workspace contains a dependency-free `idroid-core` library and deterministic
-tests for its current in-memory behavior. Android and macOS application code,
-transport, production security, and release packaging are not implemented.
+tests for its current in-memory behavior. A bounded, non-product Android-to-
+macOS feasibility experiment is also present under
+`experiments/android-macos-vertical-slice/`; transport interoperability,
+production security, and release packaging remain unimplemented.
 
 The repository's acceptance baseline is a clean checkout that can run the
 pinned Rust core tests on Linux:
@@ -39,8 +41,10 @@ an application exists.
 
 ## Run and test
 
-There is no runnable Android, macOS, or server executable yet. The commands
+There is no product Android, macOS, or server executable yet. The commands
 below exercise the repository's current deliverable: the portable Rust core.
+The bounded macOS-only and Android build experiments have their own exact
+commands in their local READMEs and are not covered by `make test`.
 
 | Command | Status and exact scope |
 | --- | --- |
@@ -95,8 +99,9 @@ stream handling.
 
 The following are **not** implemented or verified by this repository:
 
-- Android APK/agent behavior, capture, input delivery, permissions, or OEM
-  compatibility;
+- Product Android agent behavior, capture, input delivery, permissions, or OEM
+  compatibility. The experimental debug APK scaffold is buildable but has no
+  physical-device evidence;
 - native macOS or Tauri application behavior, permissions, signing, or
   notarization;
 - sockets, discovery, pairing UX, WebRTC, USB/ADB, or network interoperability;
@@ -117,9 +122,10 @@ logged-in macOS host; it is not a product application or a cross-device result.
 
 ## Deploy status
 
-**Not deployable yet.** There is no application binary, service, APK, signed
-macOS bundle, release artifact, or deployment configuration. The Docker image
-is a Linux validation container only; it is not a product runtime or release
-image. Deployment becomes meaningful after a platform application, transport,
+**Not deployable yet.** There is no product service, signed macOS bundle,
+release APK, release artifact, or deployment configuration. The experimental
+debug APK is not a deployable product artifact. The Docker image is a Linux
+validation container only; it is not a product runtime or release image.
+Deployment becomes meaningful after a platform application, transport,
 production security boundary, packaging/signing process, and release checks are
 implemented and verified.

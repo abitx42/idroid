@@ -14,6 +14,10 @@
     video { display: block; width: min(100%, 900px); aspect-ratio: 16 / 9; background: #050505; border-radius: 14px; }
     #input-target { margin-top: 16px; padding: 20px; border: 1px solid #3b3d47; border-radius: 12px; outline: none; }
     #input-target:focus { border-color: #6e9eff; }
+    #input-target { position: relative; overflow: hidden; }
+    #input-target::after { content: ""; position: absolute; inset: 0 auto 0 -35%; width: 35%; background: linear-gradient(90deg, transparent, rgba(110,158,255,.38), transparent); animation: sweep 1.4s linear infinite; pointer-events: none; }
+    #input-target.input-hit { background: #254f7d; }
+    @keyframes sweep { from { transform: translateX(0); } to { transform: translateX(390%); } }
     code { color: #a9c7ff; }
   </style>
 </head>
@@ -22,7 +26,7 @@
   <h1>WKWebView WebRTC feasibility probe</h1>
   <p>This is a local loopback. It is not an Android or network measurement.</p>
   <div id="status">Waiting for native probe…</div>
-  <video id="remote" autoplay playsinline></video>
+  <video id="remote" autoplay muted playsinline></video>
   <div id="input-target" tabindex="0">Input target — click or type here for manual samples.</div>
 </main>
 <script>
@@ -30,7 +34,9 @@
   const status = document.getElementById('status');
   const video = document.getElementById('remote');
   const target = document.getElementById('input-target');
+  const INPUT_ACK_TIMEOUT_MS = 1000;
   let startTime = 0;
+  let setupReadyMs = null;
   let firstFrameMs = null;
   let callbackCount = 0;
   let presentedRepeats = 0;
@@ -41,8 +47,14 @@
   let sourceStream;
   let inboundPeer;
   let outboundPeer;
+  let remoteTrackReceived = false;
+  let remotePlaybackStarted = false;
   const scripted = [];
   const manual = [];
+  const pendingInputs = new Map();
+  let nextInputSequence = 1;
+  let scriptedScheduledCount = 0;
+  let scriptedDispatchedCount = 0;
 
   function send(body) {
     if (window.webkit?.messageHandlers?.probe) {
@@ -59,11 +71,53 @@
     return sorted[index];
   }
 
-  function recordInput(collection, kind) {
-    const sent = performance.now();
-    requestAnimationFrame(() => {
-      collection.push({ kind, responseMs: performance.now() - sent });
-    });
+  function finishInputSample(pending, frameAt, acknowledged) {
+    if (!pendingInputs.has(pending.sequence)) return;
+    pendingInputs.delete(pending.sequence);
+    const frameDelayMs = frameAt - pending.handlerAt;
+    pending.sample.legacyResponseMs = frameDelayMs;
+    pending.sample.handlerToNextAnimationFrameMs = acknowledged ? frameDelayMs : null;
+    pending.sample.acknowledged = acknowledged;
+    pending.sample.missingAcknowledgement = !acknowledged;
+    pending.sample.timedOut = pending.sample.timedOut || frameDelayMs > INPUT_ACK_TIMEOUT_MS;
+    pending.collection.push(pending.sample);
+  }
+
+  function recordInput(collection, kind, event, dispatchAtMs = null, scheduledAtMs = null) {
+    const handlerAt = performance.now();
+    const sequence = nextInputSequence++;
+    const sample = {
+      sequence,
+      kind,
+      trusted: Boolean(event && event.isTrusted),
+      scheduledAtMs,
+      dispatchAtMs,
+      handlerAtMs: handlerAt - startTime,
+      dispatchToHandlerMs: dispatchAtMs === null ? null : handlerAt - dispatchAtMs,
+      scheduledToDispatchMs: scheduledAtMs === null ? null : dispatchAtMs - scheduledAtMs,
+      legacyResponseMs: null,
+      handlerToNextAnimationFrameMs: null,
+      acknowledged: false,
+      missingAcknowledgement: false,
+      timedOut: false
+    };
+    const pending = { sequence, collection, sample, handlerAt };
+    pendingInputs.set(sequence, pending);
+
+    target.classList.toggle('input-hit', sequence % 2 === 0);
+    target.dataset.lastInputSequence = String(sequence);
+    requestAnimationFrame(frameAt => finishInputSample(pending, frameAt, true));
+    setTimeout(() => {
+      if (pendingInputs.has(sequence)) pending.sample.timedOut = true;
+    }, INPUT_ACK_TIMEOUT_MS);
+  }
+
+  function flushPendingInputs() {
+    const flushAt = performance.now();
+    for (const pending of Array.from(pendingInputs.values())) {
+      pending.sample.timedOut = pending.sample.timedOut || flushAt - pending.handlerAt > INPUT_ACK_TIMEOUT_MS;
+      finishInputSample(pending, flushAt, false);
+    }
   }
 
   function drawSource(context, width, height) {
@@ -91,23 +145,37 @@
   }
 
   async function collectStats() {
-    const stats = {};
+    const stats = { reports: 0, types: [], inbound: null, codec: null };
+    const observe = item => {
+      if (!item || typeof item !== 'object') return;
+      stats.reports += 1;
+      if (item.type && !stats.types.includes(item.type)) stats.types.push(item.type);
+      if (item.type === 'inbound-rtp' && (item.kind === 'video' || item.mediaType === 'video')) {
+        stats.inbound = {
+          framesDecoded: item.framesDecoded ?? null,
+          framesReceived: item.framesReceived ?? null,
+          framesDropped: item.framesDropped ?? null,
+          framesPerSecond: item.framesPerSecond ?? null,
+          decoderImplementation: item.decoderImplementation ?? null,
+          powerEfficient: item.powerEfficient ?? null,
+          codecId: item.codecId ?? null,
+          totalDecodeTime: item.totalDecodeTime ?? null,
+          jitterBufferDelay: item.jitterBufferDelay ?? null,
+          jitterBufferEmittedCount: item.jitterBufferEmittedCount ?? null
+        };
+      }
+      if (item.type === 'codec' && item.mimeType?.startsWith('video/')) {
+        stats.codec = { mimeType: item.mimeType, codec: item.codec ?? null, payloadType: item.payloadType ?? null };
+      }
+    };
     for (const report of [outboundPeer, inboundPeer]) {
       if (!report) continue;
-      for (const item of await report.getStats()) {
-        if (item.type === 'inbound-rtp' && item.kind === 'video') {
-          stats.inbound = {
-            framesDecoded: item.framesDecoded ?? null,
-            framesReceived: item.framesReceived ?? null,
-            framesDropped: item.framesDropped ?? null,
-            decoderImplementation: item.decoderImplementation ?? null,
-            powerEfficient: item.powerEfficient ?? null,
-            codecId: item.codecId ?? null,
-            totalDecodeTime: item.totalDecodeTime ?? null
-          };
-        }
-        if (item.type === 'codec' && item.mimeType?.startsWith('video/')) {
-          stats.codec = { mimeType: item.mimeType, codec: item.codec ?? null, payloadType: item.payloadType ?? null };
+      const reportEntries = await report.getStats();
+      if (typeof reportEntries.forEach === 'function') {
+        reportEntries.forEach(observe);
+      } else {
+        for (const entry of reportEntries) {
+          observe(Array.isArray(entry) && entry.length === 2 ? entry[1] : entry);
         }
       }
     }
@@ -125,8 +193,9 @@
       outboundPeer = new RTCPeerConnection({ iceServers: [] });
       inboundPeer = new RTCPeerConnection({ iceServers: [] });
       inboundPeer.ontrack = event => {
-        video.srcObject = event.streams[0];
-        video.play().catch(error => send({ type: 'error', error: `video.play failed: ${error}` }));
+        remoteTrackReceived = true;
+        video.srcObject = event.streams[0] || new MediaStream([event.track]);
+        video.play().then(() => { remotePlaybackStarted = true; }).catch(error => send({ type: 'error', error: `video.play failed: ${error}` }));
         if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(onVideoFrame);
       };
       for (const track of sourceStream.getTracks()) outboundPeer.addTrack(track, sourceStream);
@@ -140,6 +209,7 @@
       await outboundPeer.setRemoteDescription(answer);
       requestAnimationFrame(() => drawSource(context, width, height));
       setStatus('WebRTC loopback connected; collecting frame and input evidence…');
+      setupReadyMs = performance.now() - startTime;
       send({ type: 'started' });
 
       const startedAt = performance.now();
@@ -147,23 +217,94 @@
         await new Promise(resolve => setTimeout(resolve, 250));
       }
       const stats = await collectStats();
-      const responses = [...scripted, ...manual].map(sample => sample.responseMs);
+      flushPendingInputs();
+      const summarizeLegacyInput = samples => {
+        const values = samples.map(sample => sample.legacyResponseMs).filter(Number.isFinite);
+        return {
+          count: values.length,
+          p50Ms: percentile(values, 0.50),
+          p95Ms: percentile(values, 0.95),
+          maxMs: values.length ? Math.max(...values) : null
+        };
+      };
+      const summarizeAcknowledgedInput = samples => {
+        const acknowledged = samples.filter(sample => sample.acknowledged && Number.isFinite(sample.handlerToNextAnimationFrameMs));
+        const values = acknowledged.map(sample => sample.handlerToNextAnimationFrameMs);
+        return {
+          attemptedCount: samples.length,
+          acknowledgedCount: acknowledged.length,
+          missingAcknowledgementCount: samples.filter(sample => sample.missingAcknowledgement).length,
+          timeoutCount: samples.filter(sample => sample.timedOut).length,
+          p50Ms: percentile(values, 0.50),
+          p95Ms: percentile(values, 0.95),
+          maxMs: values.length ? Math.max(...values) : null
+        };
+      };
+      const callbackFreshness = callbackCount ? (callbackCount - presentedRepeats) / callbackCount : 0;
+      const functionalPlayback = Boolean(
+        remoteTrackReceived &&
+        remotePlaybackStarted &&
+        video.readyState >= 3 &&
+        callbackCount >= 100 &&
+        callbackFreshness >= 0.99 &&
+        nonMonotonic === 0
+      );
+      const frameFreshnessGate = stats.inbound && typeof stats.inbound.framesDecoded === 'number'
+        ? (stats.inbound.framesDecoded > 0 && callbackFreshness >= 0.99 && nonMonotonic === 0 ? 'PASS' : 'FAIL')
+        : 'NOT_OBSERVABLE';
+      const hardwareFieldsObservable = Boolean(
+        stats.inbound &&
+        (stats.inbound.decoderImplementation !== null || stats.inbound.powerEfficient !== null)
+      );
+      const effectivePlaybackSeconds = firstFrameMs === null
+        ? null
+        : Math.max(0.001, durationSeconds - firstFrameMs / 1_000);
+      const observedFramesPerSecond = effectivePlaybackSeconds !== null && stats.inbound &&
+        typeof stats.inbound.framesDecoded === 'number'
+        ? stats.inbound.framesDecoded / effectivePlaybackSeconds
+        : null;
       send({ type: 'result', status: 'COMPLETED', result: {
         userAgent: navigator.userAgent,
         requestVideoFrameCallback: typeof video.requestVideoFrameCallback === 'function',
+        hasRTCPeerConnection: typeof RTCPeerConnection === 'function',
+        hasCanvasCaptureStream: Boolean(sourceCanvas && sourceCanvas.captureStream),
+        remoteTrackReceived,
+        remotePlaybackStarted,
         readyState: video.readyState,
+        setupReadyMs,
         firstFrameMs,
         callbackCount,
         presentedRepeats,
         nonMonotonic,
         sourceFrames,
+        functionalGate: functionalPlayback ? 'PASS' : 'FAIL',
+        frameFreshnessGate,
+        hardwareDecode: {
+          observation: hardwareFieldsObservable ? 'OBSERVED' : 'NOT_OBSERVABLE',
+          decoderImplementation: stats.inbound?.decoderImplementation ?? null,
+          powerEfficient: stats.inbound?.powerEfficient ?? null
+        },
         input: {
+          metricVersion: 2,
+          ackTimeoutMs: INPUT_ACK_TIMEOUT_MS,
+          scriptedScheduledCount,
+          scriptedDispatchedCount,
           scriptedCount: scripted.length,
           manualCount: manual.length,
-          p50Ms: percentile(responses, 0.50),
-          p95Ms: percentile(responses, 0.95),
-          maxMs: responses.length ? Math.max(...responses) : null
+          manualInputGate: manual.length > 0 ? 'OBSERVED' : 'NOT_TESTED',
+          metricDefinitions: {
+            legacyNextAnimationFrameMs: 'Elapsed from the existing callback/event-handler entry to the next requestAnimationFrame callback; retained for comparison, not a real input acknowledgement.',
+            handlerToNextAnimationFrameMs: 'Elapsed from a dispatched event handler to the next requestAnimationFrame callback after the target visual state is updated; a DOM frame-boundary proxy, not glass-to-glass latency.'
+          },
+          legacyNextAnimationFrame: {
+            scripted: summarizeLegacyInput(scripted),
+            manual: summarizeLegacyInput(manual)
+          },
+          scripted: summarizeAcknowledgedInput(scripted),
+          manual: summarizeAcknowledgedInput(manual),
+          samples: { scripted, manual }
         },
+        observedFramesPerSecond,
         stats
       }});
     } catch (error) {
@@ -171,12 +312,32 @@
     }
   }
 
-  target.addEventListener('click', () => recordInput(manual, 'click'));
-  target.addEventListener('keydown', () => recordInput(manual, 'key'));
+  target.addEventListener('click', event => {
+    if (event.isTrusted) recordInput(manual, 'manual-click', event);
+  });
+  target.addEventListener('keydown', event => {
+    if (event.isTrusted) recordInput(manual, 'manual-key', event);
+  });
   window.startProbe = durationSeconds => {
-    for (let i = 0; i < 100; i += 1) setTimeout(() => recordInput(scripted, 'scripted'), i * 20);
     run(durationSeconds);
+    for (let i = 0; i < 100; i += 1) {
+      scriptedScheduledCount += 1;
+      const scheduledAtMs = performance.now() + i * 20;
+      setTimeout(() => {
+        const dispatchAtMs = performance.now();
+        scriptedDispatchedCount += 1;
+        target.dispatchEvent(new CustomEvent('idroid-scripted-input', {
+          bubbles: true,
+          detail: { scheduledAtMs }
+        }));
+        target.dataset.lastScriptedDispatchMs = String(dispatchAtMs - startTime);
+      }, i * 20);
+    }
   };
+  target.addEventListener('idroid-scripted-input', event => {
+    const dispatchAtMs = performance.now();
+    recordInput(scripted, 'scripted-event', event, dispatchAtMs, event.detail?.scheduledAtMs ?? null);
+  });
 })();
 </script>
 </body>
