@@ -36,6 +36,7 @@ internal object DiagnosticState {
         ICE_GATHERING_STARTED,
         TCP_CONNECTING,
         TCP_CONNECTED,
+        PEER_CONNECTION_CONNECTED,
         SIGNALING_ERROR,
         USER_STOP_REQUESTED,
         CAPTURE_STOPPED_BY_ANDROID,
@@ -78,6 +79,14 @@ internal object DiagnosticState {
         ICE_GATHERING_TIMEOUT,
         ICE_CONNECTION_FAILED,
         PEER_CONNECTION_FAILED,
+        INVALID_CONFIGURATION,
+        SESSION_ALREADY_ACTIVE,
+        H264_NOT_SUPPORTED,
+        SCREEN_FRAME_TIMEOUT,
+        SDP_OFFER_TIMEOUT,
+        SDP_LOCAL_DESCRIPTION_TIMEOUT,
+        SDP_REMOTE_DESCRIPTION_TIMEOUT,
+        PEER_CONNECTION_TIMEOUT,
         TCP_CONNECTION_FAILED,
         TCP_CONNECT_TIMEOUT,
         SIGNALING_WRITE_FAILED,
@@ -232,7 +241,7 @@ internal object Signaling {
         offerSdp: String,
         onStatus: (DiagnosticState.Snapshot) -> Unit,
     ): String {
-        if (host.isBlank() || port !in 1..65535 || pairingCode.length < 8) {
+        if (!isNumericIpv4(host) || port !in 1..65535 || !validPairingCode(pairingCode)) {
             val failure = Failure(FailureCode.INVALID_SIGNALING_INPUT)
             recordFailure(failure)
             throw failure
@@ -331,5 +340,17 @@ internal object Signaling {
         val mac = Mac.getInstance("HmacSHA256")
         mac.init(SecretKeySpec(secret.toByteArray(StandardCharsets.UTF_8), "HmacSHA256"))
         return mac.doFinal(value.toByteArray(StandardCharsets.UTF_8)).joinToString("") { "%02x".format(it) }
+    }
+
+    private fun validPairingCode(value: String): Boolean =
+        value.toByteArray(StandardCharsets.UTF_8).size in 8..256 &&
+            value.all { it.code in 0x21..0x7e }
+
+    private fun isNumericIpv4(value: String): Boolean {
+        val octets = value.split('.')
+        if (octets.size != 4) return false
+        val numbers = octets.map { it.toIntOrNull() ?: return false }
+        if (numbers.any { it !in 0..255 }) return false
+        return true
     }
 }

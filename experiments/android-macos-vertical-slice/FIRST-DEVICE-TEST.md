@@ -1,6 +1,6 @@
 # First physical Android → Mac video trial
 
-**Status: procedure prepared; physical-device validation NOT TESTED.** This is
+**Status: procedure exercised for diagnostic trials; successful media validation NOT ESTABLISHED.** This is
 one Android screen-capture/video receiver, not remote touch control, production
 pairing, or the complete HG-2 vertical slice. Follow this from the repository
 root in a normal interactive macOS Terminal with a logged-in desktop session.
@@ -238,7 +238,8 @@ establishes the underlying cause or a baseline pass.
     a collecting status means no accepted event has been observed yet; an empty
     log with a failed status is missing evidence.
     Timestamped stage events include button press, projection consent, service
-    start, screen capture, SDP offer creation, ICE completion, TCP connection,
+    start, screen capture, first captured frame, SDP offer creation, ICE start
+    and completion, TCP connection, peer connection, bounded timeout failures,
     and sanitized signaling failures.
  4. In a **second Terminal**, start the bounded readiness watcher below. It
     checks the listener without connecting to it, requires exactly one listener

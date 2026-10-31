@@ -1,9 +1,10 @@
 # Native WebRTC/H.264 feasibility experiment
 
 **Status:** minimal native WebRTC/H.264 loopback implemented; three 30-second
-trials completed; an Android-facing receiver extension builds and has negative
-signaling validation only. This remains a feasibility experiment, not a product
-route.
+trials completed; an Android-facing receiver extension builds, has negative
+signaling validation, and has been exercised in a physical diagnostic run that
+did not reach TCP signaling. This remains a feasibility experiment, not a
+product route.
 
 This is a bounded macOS feasibility experiment. It is not the iDroid
 application, Android capture, production pairing, a network interoperability
@@ -160,8 +161,9 @@ with `--accept-timeout-seconds 45` (the accepted range is `(0, 3600]`). The
 receiver report includes the source
 environment record, selected bind address/interface and port, libdatachannel
 revision, signaling/connection state, H.264 decode counters, presentation
-counters, and explicit Android-side `NOT_TESTED` limits. No physical Android
-run has been completed in this checkout.
+counters, and explicit Android-side `NOT_TESTED` limits. A physical diagnostic
+run completed, but no successful Android media session has been completed in
+this checkout.
 
 Use the complete [first-device procedure](../android-macos-vertical-slice/FIRST-DEVICE-TEST.md)
 for the real phone session. Prefer `--pairing-code-stdin` to keep the local code

@@ -17,6 +17,7 @@ import org.webrtc.Logging
 import org.webrtc.MediaConstraints
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
+import org.webrtc.RtpTransceiver
 import org.webrtc.ScreenCapturerAndroid
 import org.webrtc.SessionDescription
 import org.webrtc.SurfaceTextureHelper
@@ -24,6 +25,7 @@ import org.webrtc.VideoSource
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -34,19 +36,34 @@ class CaptureService : Service() {
     // unwinding; using a separate worker prevents signaling from being starved
     // behind that callback chain.
     private val signalingExecutor = Executors.newSingleThreadExecutor()
+    private val timeoutExecutor = Executors.newSingleThreadScheduledExecutor()
     private val iceGatheringComplete = CountDownLatch(1)
+    private val firstFrameCaptured = CountDownLatch(1)
     private val iceCompleteReported = AtomicBoolean(false)
     private val firstFrameReported = AtomicBoolean(false)
+    private val sessionActive = AtomicBoolean(false)
     private val stopping = AtomicBoolean(false)
     private var capturer: ScreenCapturerAndroid? = null
     private var factory: PeerConnectionFactory? = null
     private var peer: PeerConnection? = null
     private var egl: EglBase? = null
     private var textureHelper: SurfaceTextureHelper? = null
+    @Volatile private var offerTimeout: ScheduledFuture<*>? = null
+    @Volatile private var localDescriptionTimeout: ScheduledFuture<*>? = null
+    @Volatile private var remoteDescriptionTimeout: ScheduledFuture<*>? = null
+    @Volatile private var peerConnectionTimeout: ScheduledFuture<*>? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent == null) {
             fail(DiagnosticState.Stage.SERVICE_START, DiagnosticState.Failure.SERVICE_START_FAILED)
+            return START_NOT_STICKY
+        }
+        if (!sessionActive.compareAndSet(false, true)) {
+            report(
+                event = DiagnosticState.Event.SIGNALING_ERROR,
+                stage = DiagnosticState.Stage.SESSION,
+                failure = DiagnosticState.Failure.SESSION_ALREADY_ACTIVE,
+            )
             return START_NOT_STICKY
         }
         try {
@@ -82,13 +99,7 @@ class CaptureService : Service() {
 
             failureStage = DiagnosticState.Stage.SCREEN_CAPTURE
             failure = DiagnosticState.Failure.SCREEN_CAPTURE_FAILED
-            PeerConnectionFactory.initialize(
-                PeerConnectionFactory.InitializationOptions.builder(this)
-                    .setEnableInternalTracer(false)
-                    // Drop library log strings, which can include SDP/errors.
-                    .setInjectableLogger({ _, _, _ -> }, Logging.Severity.LS_NONE)
-                    .createInitializationOptions()
-            )
+            initializePeerConnectionFactory()
             egl = EglBase.create()
             textureHelper = SurfaceTextureHelper.create("idroid-capture", egl!!.eglBaseContext)
             val encoderFactory = DefaultVideoEncoderFactory(egl!!.eglBaseContext, true, true)
@@ -101,6 +112,7 @@ class CaptureService : Service() {
             val screenCapturer = ScreenCapturerAndroid(resultData, object : MediaProjection.Callback() {
                 override fun onStop() {
                     if (stopping.compareAndSet(false, true)) {
+                        cancelTimeouts()
                         report(
                             event = DiagnosticState.Event.CAPTURE_STOPPED_BY_ANDROID,
                             stage = DiagnosticState.Stage.SCREEN_CAPTURE,
@@ -119,6 +131,11 @@ class CaptureService : Service() {
             screenCapturer.initialize(textureHelper, this, object : org.webrtc.CapturerObserver {
                 override fun onCapturerStarted(success: Boolean) {
                     sourceObserver.onCapturerStarted(success)
+                    if (!success) {
+                        fail(DiagnosticState.Stage.SCREEN_CAPTURE, DiagnosticState.Failure.SCREEN_CAPTURE_FAILED)
+                    } else if (!stopping.get()) {
+                        report(DiagnosticState.Event.SCREEN_CAPTURE_STARTED, DiagnosticState.Stage.SCREEN_CAPTURE)
+                    }
                 }
 
                 override fun onCapturerStopped() {
@@ -126,14 +143,13 @@ class CaptureService : Service() {
                 }
 
                 override fun onFrameCaptured(frame: org.webrtc.VideoFrame) {
+                    sourceObserver.onFrameCaptured(frame)
                     if (firstFrameReported.compareAndSet(false, true)) {
                         report(DiagnosticState.Event.SCREEN_FRAME_CAPTURED, DiagnosticState.Stage.SCREEN_CAPTURE)
+                        firstFrameCaptured.countDown()
                     }
-                    sourceObserver.onFrameCaptured(frame)
                 }
             })
-            screenCapturer.startCapture(640, 360, 30)
-            report(DiagnosticState.Event.SCREEN_CAPTURE_STARTED, DiagnosticState.Stage.SCREEN_CAPTURE)
 
             failureStage = DiagnosticState.Stage.SDP
             failure = DiagnosticState.Failure.SDP_OFFER_FAILED
@@ -147,19 +163,53 @@ class CaptureService : Service() {
                 return
             }
             peer = createdPeer
-            createdPeer.addTrack(video, listOf("screen-stream"))
+            val h264Codecs = factory!!.getRtpSenderCapabilities(
+                org.webrtc.MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO,
+            ).codecs.filter { it.mimeType.equals("video/H264", ignoreCase = true) }
+            if (h264Codecs.isEmpty()) {
+                fail(DiagnosticState.Stage.SDP, DiagnosticState.Failure.H264_NOT_SUPPORTED)
+                return
+            }
+            val transceiver = createdPeer.addTransceiver(
+                video,
+                RtpTransceiver.RtpTransceiverInit(
+                    RtpTransceiver.RtpTransceiverDirection.SEND_ONLY,
+                    listOf("screen-stream"),
+                ),
+            )
+            transceiver.setCodecPreferences(h264Codecs)
+
+            screenCapturer.startCapture(640, 360, 30)
+            if (stopping.get()) return
+            if (!firstFrameCaptured.await(5, TimeUnit.SECONDS)) {
+                fail(DiagnosticState.Stage.SCREEN_CAPTURE, DiagnosticState.Failure.SCREEN_FRAME_TIMEOUT)
+                return
+            }
+
+            offerTimeout = scheduleFailure(
+                5,
+                DiagnosticState.Stage.SDP,
+                DiagnosticState.Failure.SDP_OFFER_TIMEOUT,
+            )
             peer!!.createOffer(object : SdpObserverAdapter({
                 fail(DiagnosticState.Stage.SDP, DiagnosticState.Failure.SDP_OFFER_FAILED)
             }) {
                 override fun onCreateSuccess(description: SessionDescription) {
                     if (stopping.get()) return
+                    cancelTimeout(offerTimeout)
                     report(DiagnosticState.Event.SDP_OFFER_CREATED, DiagnosticState.Stage.SDP)
                     try {
+                        localDescriptionTimeout = scheduleFailure(
+                            5,
+                            DiagnosticState.Stage.SDP,
+                            DiagnosticState.Failure.SDP_LOCAL_DESCRIPTION_TIMEOUT,
+                        )
                         peer!!.setLocalDescription(object : SdpObserverAdapter({
                             fail(DiagnosticState.Stage.SDP, DiagnosticState.Failure.SDP_LOCAL_DESCRIPTION_FAILED)
                         }) {
                             override fun onSetSuccess() {
                                 if (stopping.get()) return
+                                cancelTimeout(localDescriptionTimeout)
                                 report(DiagnosticState.Event.LOCAL_DESCRIPTION_SET, DiagnosticState.Stage.SDP)
                                 waitForIceAndSignal(host, port, pairing, description)
                             }
@@ -199,11 +249,24 @@ class CaptureService : Service() {
                     if (stopping.get()) return@execute
                     failureStage = DiagnosticState.Stage.SDP_REMOTE
                     failure = DiagnosticState.Failure.SDP_REMOTE_DESCRIPTION_FAILED
+                    remoteDescriptionTimeout = scheduleFailure(
+                        10,
+                        DiagnosticState.Stage.SDP_REMOTE,
+                        DiagnosticState.Failure.SDP_REMOTE_DESCRIPTION_TIMEOUT,
+                    )
                     peer!!.setRemoteDescription(object : SdpObserverAdapter({
                         fail(DiagnosticState.Stage.SDP_REMOTE, DiagnosticState.Failure.SDP_REMOTE_DESCRIPTION_FAILED)
                     }) {
                         override fun onSetSuccess() {
-                            if (!stopping.get()) report(DiagnosticState.Event.REMOTE_DESCRIPTION_SET, DiagnosticState.Stage.SDP_REMOTE)
+                            if (!stopping.get()) {
+                                cancelTimeout(remoteDescriptionTimeout)
+                                report(DiagnosticState.Event.REMOTE_DESCRIPTION_SET, DiagnosticState.Stage.SDP_REMOTE)
+                                peerConnectionTimeout = scheduleFailure(
+                                    30,
+                                    DiagnosticState.Stage.SIGNALING,
+                                    DiagnosticState.Failure.PEER_CONNECTION_TIMEOUT,
+                                )
+                            }
                         }
                     }, SessionDescription(SessionDescription.Type.ANSWER, answer))
                 } catch (safe: Signaling.Failure) {
@@ -217,10 +280,36 @@ class CaptureService : Service() {
         }
     }
 
+    private fun scheduleFailure(
+        seconds: Long,
+        stage: DiagnosticState.Stage,
+        failure: DiagnosticState.Failure,
+    ): ScheduledFuture<*> = timeoutExecutor.schedule(
+        { fail(stage, failure) },
+        seconds,
+        TimeUnit.SECONDS,
+    )
+
+    private fun cancelTimeout(future: ScheduledFuture<*>?) {
+        future?.cancel(false)
+    }
+
+    private fun cancelTimeouts() {
+        cancelTimeout(offerTimeout)
+        cancelTimeout(localDescriptionTimeout)
+        cancelTimeout(remoteDescriptionTimeout)
+        cancelTimeout(peerConnectionTimeout)
+        offerTimeout = null
+        localDescriptionTimeout = null
+        remoteDescriptionTimeout = null
+        peerConnectionTimeout = null
+    }
+
     // Only app-owned enum values reach these helpers. Never pass a throwable,
     // callback error string, pairing code, HMAC, or SDP to the diagnostic path.
     private fun fail(stage: DiagnosticState.Stage, failure: DiagnosticState.Failure) {
         if (stopping.compareAndSet(false, true)) {
+            cancelTimeouts()
             report(DiagnosticState.Event.SIGNALING_ERROR, stage, failure)
             stopSelf()
         }
@@ -263,8 +352,23 @@ class CaptureService : Service() {
         }
 
         override fun onConnectionChange(state: PeerConnection.PeerConnectionState?) {
-            if (state == PeerConnection.PeerConnectionState.FAILED) {
-                fail(DiagnosticState.Stage.SIGNALING, DiagnosticState.Failure.PEER_CONNECTION_FAILED)
+            when (state) {
+                PeerConnection.PeerConnectionState.CONNECTED -> {
+                    cancelTimeout(peerConnectionTimeout)
+                    if (!stopping.get()) {
+                        report(DiagnosticState.Event.PEER_CONNECTION_CONNECTED, DiagnosticState.Stage.SIGNALING)
+                    }
+                }
+                PeerConnection.PeerConnectionState.FAILED -> {
+                    fail(DiagnosticState.Stage.SIGNALING, DiagnosticState.Failure.PEER_CONNECTION_FAILED)
+                }
+                PeerConnection.PeerConnectionState.DISCONNECTED,
+                PeerConnection.PeerConnectionState.CLOSED -> {
+                    if (!stopping.get()) {
+                        fail(DiagnosticState.Stage.SIGNALING, DiagnosticState.Failure.PEER_CONNECTION_FAILED)
+                    }
+                }
+                else -> Unit
             }
         }
         override fun onIceCandidate(candidate: org.webrtc.IceCandidate?) { }
@@ -280,6 +384,7 @@ class CaptureService : Service() {
 
     override fun onDestroy() {
         stopping.set(true)
+        cancelTimeouts()
         cleanup { capturer?.stopCapture() }
         cleanup { capturer?.dispose() }
         cleanup { peer?.dispose() }
@@ -288,6 +393,8 @@ class CaptureService : Service() {
         cleanup { egl?.release() }
         executor.shutdownNow()
         signalingExecutor.shutdownNow()
+        timeoutExecutor.shutdownNow()
+        sessionActive.set(false)
         report(DiagnosticState.Event.CAPTURE_SERVICE_DESTROYED, DiagnosticState.Stage.CLEANUP)
         super.onDestroy()
     }
@@ -295,6 +402,20 @@ class CaptureService : Service() {
     private inline fun cleanup(block: () -> Unit) {
         try { block() } catch (_: Throwable) {
             report(DiagnosticState.Event.SIGNALING_ERROR, DiagnosticState.Stage.SESSION, DiagnosticState.Failure.SIGNALING_FAILED)
+        }
+    }
+
+    private fun initializePeerConnectionFactory() {
+        synchronized(factoryInitLock) {
+            if (factoryInitialized) return
+            PeerConnectionFactory.initialize(
+                PeerConnectionFactory.InitializationOptions.builder(this)
+                    .setEnableInternalTracer(false)
+                    // Drop library log strings, which can include SDP/errors.
+                    .setInjectableLogger({ _, _, _ -> }, Logging.Severity.LS_NONE)
+                    .createInitializationOptions()
+            )
+            factoryInitialized = true
         }
     }
 
@@ -315,6 +436,8 @@ class CaptureService : Service() {
     }
 
     companion object {
+        private val factoryInitLock = Any()
+        private var factoryInitialized = false
         private const val tag = "iDroidCapture"
         private const val channel = "idroid-capture"
         private const val notificationId = 8675

@@ -1,9 +1,9 @@
 # Android-to-macOS vertical-slice experiment
 
 **Status:** acceptance plan frozen; a buildable Kotlin debug APK and a buildable
-native macOS receiver now exist. Real-device execution is still blocked because
-no physical Android device is attached and no shared Wi-Fi run has been
-performed.
+native macOS receiver exist. A physical diagnostic run reached Android consent,
+foreground-service startup, screen capture, and local SDP creation, but no
+successful Android-to-Mac media session has been established.
 
 This experiment is deliberately smaller than the product. It targets one
 physical Android device and one macOS host, one screen-capture session, one
@@ -20,7 +20,7 @@ The inventory was measured on the current host before implementation:
 - Apple development tools: Command Line Tools at
   `/Library/Developer/CommandLineTools`; no valid code-signing identities were
   returned by `security find-identity -p codesigning -v`.
-- Android hardware: **no physical Android device attached**;
+- Android hardware at the initial inventory point: **no physical Android device attached**;
   `$HOME/Library/Android/sdk/platform-tools/adb devices -l` listed no devices.
 - Wi-Fi: the host reported no active AirPort association. `en0` had a private
   `172.30.192.133` address and a default route, but a shared Android/macOS
@@ -32,8 +32,9 @@ The inventory was measured on the current host before implementation:
 - Repository state: no Android Gradle project, APK, Android source, or Android
   signing configuration existed at the start of this experiment.
 
-The missing device, unverified shared Wi-Fi, and lack of signing identity mean
-that no real-device result may be reported from this checkout. The Android build
+The initial missing device, unverified shared Wi-Fi, and lack of signing identity
+were host-readiness limitations; the later physical run remains diagnostic-only.
+The Android build
 uses a project-local Gradle `8.7` bootstrap and keeps resolved dependencies in
 `app/gradle.lockfile`; it still needs an Android SDK supplied through
 `ANDROID_SDK_ROOT`/`ANDROID_HOME` or a standard per-user SDK path.
@@ -46,10 +47,10 @@ gates, not replacements for the product hard gates in
 
 | Gate | PASS evidence | Current status |
 | --- | --- | --- |
-| Real Android-to-Mac connectivity | A physical Android device and this Mac establish one authenticated session over the same declared Wi-Fi, with session ID and endpoint logs. | **NOT_TESTED** — no device/shared Wi-Fi. |
-| Android capture consent | User initiates MediaProjection consent; denial produces no capture and no session. | **NOT_TESTED** — APK builds; no physical consent/denial trial. |
-| Foreground-service lifecycle | Capture runs only with the declared foreground-service type and visible notification; stop/revoke tears down the projection. | **NOT_TESTED**. |
-| H.264 media | Android negotiates H.264; Mac records negotiated profile/packetization, received frames, decoded frames, and decoder limitations. | Local native H.264 path passes; Android path **NOT_TESTED**. |
+| Real Android-to-Mac connectivity | A physical Android device and this Mac establish one authenticated session over the same declared Wi-Fi, with session ID and endpoint logs. | **NOT_ESTABLISHED** — diagnostic run reached no TCP connection. |
+| Android capture consent | User initiates MediaProjection consent; denial produces no capture and no session. | **PARTIAL** — consent denial and grant were observed; latest source changes need a fresh run. |
+| Foreground-service lifecycle | Capture runs only with the declared foreground-service type and visible notification; stop/revoke tears down the projection. | **PARTIAL** — startup and capture events observed; full stop/revoke remains unverified. |
+| H.264 media | Android negotiates H.264; Mac records negotiated profile/packetization, received frames, decoded frames, and decoder limitations. | Local native H.264 path passes; Android interoperability **NOT_ESTABLISHED**. |
 | Frame rate/freshness | Three 30-second device trials record received/decoded/dropped frames and freshness indicators; no displayed-frame identity is inferred where unavailable. | **NOT_TESTED**. |
 | Setup/first frame | Connection setup, first received, first decoded, and first-ready/display observations are recorded with unique reports. | **NOT_TESTED**. |
 | Glass-to-glass | A calibrated 240-fps camera records Android input/capture marker and Mac display marker; p50/p95/p99/max, sample count, uncertainty, and failures are retained. | **NOT_TESTED** — no camera/device rig. |
@@ -166,8 +167,8 @@ command, environment variable or file. The receiver report records the bounded
 signaling result, WebRTC connection state, H.264 decode/presentation counters,
 and explicit `NOT_TESTED` limits for Android-only measurements. Native receiver
 stdout/stderr is not retained; the structured report is the receiver-side
-evidence. This command has not been run against a physical Android device in
-the current environment.
+evidence. The physical run completed as a diagnostic attempt but did not
+establish a successful media session.
 
 ## Evidence rules
 

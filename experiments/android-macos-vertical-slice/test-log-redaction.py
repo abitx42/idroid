@@ -18,6 +18,8 @@ class RedactionTests(unittest.TestCase):
             "diagnostic=ICE_GATHERING_TIMEOUT stage=ice_gather category=timeout timeout_ms=5000",
             "stage=ice_connection category=state state=CONNECTED",
             "diagnostic=CAPTURE_CONSENT_GRANTED",
+            "timestamp_ms=1735689600123 diagnostic=SCREEN_FRAME_CAPTURED stage=screen_capture status=ok",
+            "timestamp_ms=1735689600123 diagnostic=SCREEN_FRAME_TIMEOUT stage=screen_capture status=failed failure=SCREEN_FRAME_TIMEOUT",
             "timestamp_ms=1735689600123 diagnostic=START_BUTTON_PRESSED stage=session status=ok",
             "timestamp_ms=1735689600123 diagnostic=SIGNALING_ERROR stage=tcp status=failed failure=TCP_CONNECT_TIMEOUT",
         ):

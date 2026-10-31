@@ -56,7 +56,7 @@ bash experiments/android-macos-vertical-slice/test-diagnostics.sh
 python3 experiments/android-macos-vertical-slice/test-log-redaction.py
 ```
 
-PASS: APK build; Android lint **0 errors, 25 warnings**; **12 direct JVM
+PASS: APK build; Android lint **0 errors, 25 warnings**; **14 direct JVM
 signaling/privacy tests**, including real local socket read timeout; **2 Python
 redaction tests**. These JVM tests are an explicit entry point, not Gradle test
 discovery. Build still warns that AGP 8.5.0 was tested only through compileSdk

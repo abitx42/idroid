@@ -58,8 +58,8 @@ object SignalingDiagnosticsTest {
     private val safeDiagnostic = Regex(
         "timestamp_ms=[0-9]+ diagnostic=[A-Z_]+ stage=[a-z_]+ status=(?:ok|failed|stopped)(?: failure=[A-Z_]+)?",
     )
-    private val loopback = InetAddress.getLoopbackAddress()
-    private val loopbackHost = checkNotNull(loopback.hostAddress)
+    private val loopback = InetAddress.getByName("127.0.0.1")
+    private val loopbackHost = "127.0.0.1"
 
     private fun exchange(fixture: Fixture, reply: (List<String>) -> String?): Exchange {
         val server = ServerSocket(0, 1, loopback)
@@ -177,6 +177,15 @@ object SignalingDiagnosticsTest {
         }, Signaling.FailureCode.INVALID_SIGNALING_INPUT)
         expectFailure(runCatching {
             Signaling.exchangeOffer(loopbackHost, Signaling.defaultPort, fixture.session, fixture.pairing.take(7), fixture.offer) { }
+        }, Signaling.FailureCode.INVALID_SIGNALING_INPUT)
+        expectFailure(runCatching {
+            Signaling.exchangeOffer("localhost", Signaling.defaultPort, fixture.session, fixture.pairing, fixture.offer) { }
+        }, Signaling.FailureCode.INVALID_SIGNALING_INPUT)
+        expectFailure(runCatching {
+            Signaling.exchangeOffer("::1", Signaling.defaultPort, fixture.session, fixture.pairing, fixture.offer) { }
+        }, Signaling.FailureCode.INVALID_SIGNALING_INPUT)
+        expectFailure(runCatching {
+            Signaling.exchangeOffer(loopbackHost, Signaling.defaultPort, fixture.session, "пароль123", fixture.offer) { }
         }, Signaling.FailureCode.INVALID_SIGNALING_INPUT)
     }
 

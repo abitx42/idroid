@@ -23,17 +23,28 @@ class MainActivity : Activity() {
     private lateinit var port: EditText
     private lateinit var pairingCode: EditText
     private lateinit var status: TextView
+    private lateinit var startButton: Button
 
     private val diagnosticListener: (DiagnosticState.Snapshot) -> Unit = { snapshot ->
         runOnUiThread {
             if (::status.isInitialized) status.text = DiagnosticState.uiText(snapshot)
+            if (::startButton.isInitialized && (
+                    snapshot.result == DiagnosticState.Result.FAILED ||
+                        snapshot.event == DiagnosticState.Event.USER_STOP_REQUESTED ||
+                        snapshot.event == DiagnosticState.Event.CAPTURE_STOPPED_BY_ANDROID ||
+                        snapshot.event == DiagnosticState.Event.CAPTURE_SERVICE_DESTROYED
+                    )) {
+                startButton.isEnabled = true
+            }
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         host = field("Mac IP address")
-        port = field("Signaling port", Signaling.defaultPort.toString())
+        port = field("Signaling port", Signaling.defaultPort.toString()).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+        }
         pairingCode = field("Experimental pairing code").apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             transformationMethod = object : PasswordTransformationMethod() {
@@ -53,9 +64,12 @@ class MainActivity : Activity() {
             setPadding(0, 24, 0, 24)
         }
         DiagnosticState.addListener(diagnosticListener)
-        val start = Button(this).apply {
+        startButton = Button(this).apply {
             text = "Consent and start capture"
-            setOnClickListener { requestProjectionConsent() }
+            setOnClickListener {
+                isEnabled = false
+                requestProjectionConsent()
+            }
         }
         val stop = Button(this).apply {
             text = "Stop capture"
@@ -67,6 +81,7 @@ class MainActivity : Activity() {
                     result = DiagnosticState.Result.STOPPED,
                 )
                 stopService(Intent(this@MainActivity, CaptureService::class.java))
+                startButton.isEnabled = true
             }
         }
         setContentView(LinearLayout(this).apply {
@@ -77,7 +92,7 @@ class MainActivity : Activity() {
                 textSize = 20f
             })
             addView(host); addView(port); addView(pairingCode)
-            addView(start); addView(stop); addView(status)
+            addView(startButton); addView(stop); addView(status)
         })
     }
 
@@ -89,6 +104,7 @@ class MainActivity : Activity() {
 
     private fun requestProjectionConsent() {
         report(DiagnosticState.Event.START_BUTTON_PRESSED, DiagnosticState.Stage.SESSION)
+        if (!validateConfiguration()) return
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             report(
                 event = DiagnosticState.Event.SIGNALING_ERROR,
@@ -99,6 +115,34 @@ class MainActivity : Activity() {
             return
         }
         launchProjectionConsent()
+    }
+
+    private fun validateConfiguration(): Boolean {
+        val address = host.text.toString().trim()
+        val portValue = port.text.toString().toIntOrNull()
+        val pairing = pairingCode.text.toString()
+        val pairingBytes = pairing.toByteArray(Charsets.UTF_8)
+        val validPairing = pairingBytes.size in 8..256 && pairing.all { it.code in 0x21..0x7e }
+        if (!isPrivateIpv4(address) || portValue !in 1..65535 || !validPairing) {
+            startButton.isEnabled = true
+            report(
+                event = DiagnosticState.Event.SIGNALING_ERROR,
+                stage = DiagnosticState.Stage.SESSION,
+                failure = DiagnosticState.Failure.INVALID_CONFIGURATION,
+            )
+            return false
+        }
+        return true
+    }
+
+    private fun isPrivateIpv4(value: String): Boolean {
+        val octets = value.split('.')
+        if (octets.size != 4) return false
+        val numbers = octets.map { it.toIntOrNull() ?: return false }
+        if (numbers.any { it !in 0..255 }) return false
+        return numbers[0] == 10 ||
+            (numbers[0] == 172 && numbers[1] in 16..31) ||
+            (numbers[0] == 192 && numbers[1] == 168)
     }
 
     private fun launchProjectionConsent() {
@@ -134,6 +178,7 @@ class MainActivity : Activity() {
         if (requestCode != requestCapture) return
         if (resultCode != RESULT_OK || data == null) {
             pairingCode.text.clear()
+            startButton.isEnabled = true
             report(
                 event = DiagnosticState.Event.SIGNALING_ERROR,
                 stage = DiagnosticState.Stage.PROJECTION_CONSENT,
@@ -154,6 +199,7 @@ class MainActivity : Activity() {
             startForegroundService(intent)
             Toast.makeText(this, "Projection consent granted", Toast.LENGTH_SHORT).show()
         } catch (_: Exception) {
+            startButton.isEnabled = true
             report(
                 event = DiagnosticState.Event.SIGNALING_ERROR,
                 stage = DiagnosticState.Stage.SERVICE_START,
