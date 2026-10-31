@@ -29,6 +29,11 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class CaptureService : Service() {
     private val executor = Executors.newSingleThreadExecutor()
+    // Keep ICE wait and signaling independent from capture/PeerConnection setup
+    // callbacks.  A WebRTC callback may arrive while the setup worker is still
+    // unwinding; using a separate worker prevents signaling from being starved
+    // behind that callback chain.
+    private val signalingExecutor = Executors.newSingleThreadExecutor()
     private val iceGatheringComplete = CountDownLatch(1)
     private val iceCompleteReported = AtomicBoolean(false)
     private val stopping = AtomicBoolean(false)
@@ -155,7 +160,7 @@ class CaptureService : Service() {
         // the gathered SDP and does not silently fall back to a public relay.
         if (stopping.get()) return
         try {
-            executor.execute {
+            signalingExecutor.execute {
                 var failureStage = DiagnosticState.Stage.SIGNALING
                 var failure = DiagnosticState.Failure.SIGNALING_FAILED
                 try {
@@ -260,6 +265,8 @@ class CaptureService : Service() {
         cleanup { textureHelper?.dispose() }
         cleanup { egl?.release() }
         executor.shutdownNow()
+        signalingExecutor.shutdownNow()
+        report(DiagnosticState.Event.CAPTURE_SERVICE_DESTROYED, DiagnosticState.Stage.CLEANUP)
         super.onDestroy()
     }
 
