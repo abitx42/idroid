@@ -165,6 +165,7 @@ class CaptureService : Service() {
                 var failure = DiagnosticState.Failure.SIGNALING_FAILED
                 try {
                     if (stopping.get()) return@execute
+                    report(DiagnosticState.Event.ICE_GATHERING_STARTED, DiagnosticState.Stage.ICE)
                     if (!iceGatheringComplete.await(5, TimeUnit.SECONDS)) {
                         fail(DiagnosticState.Stage.ICE, DiagnosticState.Failure.ICE_GATHERING_TIMEOUT)
                         return@execute

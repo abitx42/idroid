@@ -32,6 +32,7 @@ internal object DiagnosticState {
         SCREEN_CAPTURE_STARTED,
         SDP_OFFER_CREATED,
         ICE_GATHERING_COMPLETE,
+        ICE_GATHERING_STARTED,
         TCP_CONNECTING,
         TCP_CONNECTED,
         SIGNALING_ERROR,
