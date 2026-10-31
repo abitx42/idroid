@@ -36,6 +36,7 @@ class CaptureService : Service() {
     private val signalingExecutor = Executors.newSingleThreadExecutor()
     private val iceGatheringComplete = CountDownLatch(1)
     private val iceCompleteReported = AtomicBoolean(false)
+    private val firstFrameReported = AtomicBoolean(false)
     private val stopping = AtomicBoolean(false)
     private var capturer: ScreenCapturerAndroid? = null
     private var factory: PeerConnectionFactory? = null
@@ -97,7 +98,6 @@ class CaptureService : Service() {
                 .setVideoDecoderFactory(decoderFactory)
                 .createPeerConnectionFactory()
 
-            val source: VideoSource = factory!!.createVideoSource(false)
             val screenCapturer = ScreenCapturerAndroid(resultData, object : MediaProjection.Callback() {
                 override fun onStop() {
                     if (stopping.compareAndSet(false, true)) {
@@ -110,14 +110,35 @@ class CaptureService : Service() {
                     }
                 }
             })
+            // ScreenCapturerAndroid is a screencast capturer.  Passing that
+            // fact into VideoSource is required by libwebrtc's screen-source
+            // adaptation path; false selects the camera-source path.
+            val source: VideoSource = factory!!.createVideoSource(screenCapturer.isScreencast())
+            val sourceObserver = source.capturerObserver
             capturer = screenCapturer
-            screenCapturer.initialize(textureHelper, this, source.capturerObserver)
+            screenCapturer.initialize(textureHelper, this, object : org.webrtc.CapturerObserver {
+                override fun onCapturerStarted(success: Boolean) {
+                    sourceObserver.onCapturerStarted(success)
+                }
+
+                override fun onCapturerStopped() {
+                    sourceObserver.onCapturerStopped()
+                }
+
+                override fun onFrameCaptured(frame: org.webrtc.VideoFrame) {
+                    if (firstFrameReported.compareAndSet(false, true)) {
+                        report(DiagnosticState.Event.SCREEN_FRAME_CAPTURED, DiagnosticState.Stage.SCREEN_CAPTURE)
+                    }
+                    sourceObserver.onFrameCaptured(frame)
+                }
+            })
             screenCapturer.startCapture(640, 360, 30)
             report(DiagnosticState.Event.SCREEN_CAPTURE_STARTED, DiagnosticState.Stage.SCREEN_CAPTURE)
 
             failureStage = DiagnosticState.Stage.SDP
             failure = DiagnosticState.Failure.SDP_OFFER_FAILED
             val video = factory!!.createVideoTrack("screen-track", source)
+            video.setEnabled(true)
             val config = PeerConnection.RTCConfiguration(emptyList())
             config.sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             val createdPeer = factory?.createPeerConnection(config, observer())
