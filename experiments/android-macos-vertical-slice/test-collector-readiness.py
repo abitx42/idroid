@@ -33,7 +33,8 @@ import time
 
 mode = os.environ["FAKE_ADB_MODE"]
 pid_path = os.environ.get("FAKE_ADB_PID")
-if pid_path:
+attempt_path = os.environ.get("FAKE_ADB_ATTEMPT")
+if pid_path and not os.path.exists(pid_path):
     with open(pid_path, "x", encoding="ascii") as output:
         output.write(str(os.getpid()))
 if mode == "fail":
@@ -42,6 +43,14 @@ if mode == "fail":
 if mode == "events":
     print("timestamp_ms=1735689600123 diagnostic=START_BUTTON_PRESSED stage=session status=ok", flush=True)
     print("unrestricted raw fixture", flush=True)
+if mode == "flaky":
+    if not attempt_path or not os.path.exists(attempt_path):
+        if attempt_path:
+            with open(attempt_path, "w", encoding="ascii") as output:
+                output.write("first\\n")
+        time.sleep(0.7)
+        raise SystemExit(17)
+    print("timestamp_ms=1735689600123 diagnostic=SCREEN_FRAME_CAPTURED stage=screen_capture status=ok", flush=True)
 while True:
     time.sleep(1)
 '''
@@ -84,6 +93,7 @@ class CollectorReadinessTests(unittest.TestCase):
         environment = os.environ.copy()
         environment["FAKE_ADB_MODE"] = mode
         environment["FAKE_ADB_PID"] = str(self.directory / f"{mode}.pid")
+        environment["FAKE_ADB_ATTEMPT"] = str(self.directory / f"{mode}.attempt")
         process = subprocess.Popen(
             [sys.executable, str(COLLECTOR), "--adb", str(self.fake_adb),
              "--serial", "synthetic", "--output", str(output), "--status", str(status)],
@@ -112,6 +122,18 @@ class CollectorReadinessTests(unittest.TestCase):
         self.assertEqual(output.read_text(encoding="utf-8"), "")
         self.assertEqual(stdout, "")
         self.assertNotIn("unrestricted fake stderr", stderr)
+
+    def test_transient_collection_failure_is_restarted(self):
+        process, output, status = self.start("flaky")
+        try:
+            wait_for_status(status, "COLLECTING_EVENTS", process)
+            self.assertEqual(
+                output.read_text(encoding="utf-8"),
+                "timestamp_ms=1735689600123 diagnostic=SCREEN_FRAME_CAPTURED stage=screen_capture status=ok\n",
+            )
+        finally:
+            process.terminate()
+            process.communicate(timeout=5)
 
     def test_empty_but_running_collection_is_not_failure(self):
         process, output, status = self.start("empty")

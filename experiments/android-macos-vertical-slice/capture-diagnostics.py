@@ -13,6 +13,8 @@ import time
 
 
 STARTUP_GRACE_SECONDS = 0.5
+LOGCAT_RETRY_LIMIT = 3
+LOGCAT_RETRY_DELAY_SECONDS = 0.5
 COLLECTOR_STATUSES = {
     "STARTING",
     "COLLECTING_NO_EVENTS",
@@ -176,33 +178,53 @@ def main():
         with open(output_path, "x", encoding="utf-8") as output:
             command = [args.adb, "-s", args.serial, "logcat", "-v", "raw", "-T", "1",
                        "iDroidCapture:I", "*:S"]
-            try:
-                child = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                         text=True, errors="replace")
-            except OSError:
-                write_status(status_path, "STARTUP_FAILED")
-                sys.exit("ADB log collector failed to start; no raw stderr was retained")
+            def start_logcat():
+                """Start logcat and tolerate a short-lived ADB transport drop."""
+                nonlocal child
+                for attempt in range(LOGCAT_RETRY_LIMIT):
+                    try:
+                        candidate = subprocess.Popen(
+                            command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            text=True, errors="replace",
+                        )
+                    except OSError:
+                        candidate = None
+                    if candidate is not None:
+                        startup_deadline = time.monotonic() + STARTUP_GRACE_SECONDS
+                        while time.monotonic() < startup_deadline:
+                            if candidate.poll() is not None:
+                                break
+                            time.sleep(0.02)
+                        if candidate.poll() is None:
+                            child = candidate
+                            return True
+                        candidate.wait()
+                    if attempt + 1 < LOGCAT_RETRY_LIMIT:
+                        time.sleep(LOGCAT_RETRY_DELAY_SECONDS)
+                return False
 
-            startup_deadline = time.monotonic() + STARTUP_GRACE_SECONDS
-            while time.monotonic() < startup_deadline:
-                if child.poll() is not None:
-                    write_status(status_path, "STARTUP_FAILED")
-                    sys.exit("ADB log collector exited during startup; no raw stderr was retained")
-                time.sleep(0.02)
+            if not start_logcat():
+                write_status(status_path, "STARTUP_FAILED")
+                sys.exit("ADB log collector exited during startup; no raw stderr was retained")
             write_status(status_path, "COLLECTING_NO_EVENTS")
 
             try:
-                for line in child.stdout:
-                    safe = redact(line)
-                    if safe is not None:
-                        output.write(safe + "\n")
-                        output.flush()
-                        write_status(status_path, "COLLECTING_EVENTS")
-                if child.wait() != 0:
-                    write_status(status_path, "COLLECTION_FAILED")
-                    sys.exit("ADB log collection failed; no raw stderr was retained")
-                write_status(status_path, "COLLECTION_FAILED")
-                sys.exit("ADB log collector exited unexpectedly; no raw stderr was retained")
+                restarts = 0
+                while True:
+                    for line in child.stdout:
+                        safe = redact(line)
+                        if safe is not None:
+                            output.write(safe + "\n")
+                            output.flush()
+                            write_status(status_path, "COLLECTING_EVENTS")
+                    returncode = child.wait()
+                    if returncode == 0:
+                        write_status(status_path, "COLLECTION_FAILED")
+                        sys.exit("ADB log collector exited unexpectedly; no raw stderr was retained")
+                    if restarts >= LOGCAT_RETRY_LIMIT or not start_logcat():
+                        write_status(status_path, "COLLECTION_FAILED")
+                        sys.exit("ADB log collection failed; no raw stderr was retained")
+                    restarts += 1
             except KeyboardInterrupt:
                 stopping = True
     except KeyboardInterrupt:
