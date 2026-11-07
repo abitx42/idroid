@@ -5,4 +5,5 @@ app/build/
 app/.cxx/
 app/reports/
 results/*.json
+results/thin-slice/
 __pycache__/

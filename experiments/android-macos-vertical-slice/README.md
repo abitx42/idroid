@@ -1,7 +1,7 @@
 # Android-to-macOS vertical-slice experiment
 
-**Status:** acceptance plan frozen; a buildable Kotlin debug APK and a buildable
-native macOS receiver exist. A physical diagnostic run reached Android consent,
+**Status:** acceptance plan frozen; a buildable Kotlin debug APK, a buildable
+thin Mac menu-bar slice, and the earlier native receiver exist. A physical diagnostic run reached Android consent,
 foreground-service startup, screen capture, and local SDP creation, but no
 successful Android-to-Mac media session has been established.
 
@@ -78,6 +78,25 @@ the existing local two-peer loopback.
   untested until a device is available.
 - No Accessibility or generic touch injection claim.
 
+### Continuity pairing slice
+
+The current debug app also contains the first real control-plane path:
+
+- scan the Mac's Core Image QR payload with CameraX/ML Kit;
+- keep the Android identity in Android Keystore;
+- connect to the QR address with TLS 1.3, pinning the Mac certificate
+  fingerprint;
+- send the one-time token and Android certificate, then persist the Mac trust
+  record; and
+- run an NSD advertiser/browser plus a connected-device foreground service for
+  later automatic reconnects.
+
+The Mac counterpart is under [`apps/mac-native`](../../apps/mac-native). The
+Mac listener is authoritative for QR expiry; Android treats `expiresAt` as
+display metadata and does not reject a token based on its own wall clock.
+Bonjour TXT data contains only role/version metadata; a stable fingerprint is
+not advertised.
+
 ### macOS
 
 - Extend the existing native receiver candidate only for a remote mode.
@@ -112,7 +131,7 @@ From the repository root, provide an Android SDK path when it is not already in
 
 ```sh
 ANDROID_SDK_ROOT=/path/to/android-sdk \
-  bash experiments/android-macos-vertical-slice/build-android.sh
+  bash experiments/android-macos-vertical-slice/build-android-core.sh
 ```
 
 The script downloads Gradle `8.7` only into the experiment's ignored `.build/`
@@ -127,8 +146,8 @@ same build can be checked without network access:
 
 ```sh
 IDROID_ANDROID_OFFLINE=1 \
-  ANDROID_SDK_ROOT=/path/to/android-sdk \
-  bash experiments/android-macos-vertical-slice/build-android.sh
+ANDROID_SDK_ROOT=/path/to/android-sdk \
+  bash experiments/android-macos-vertical-slice/build-android-core.sh
 ```
 
 The native receiver is built together with the existing native H.264 probe:

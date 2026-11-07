@@ -1,8 +1,8 @@
 # iDroid platform support
 
-**Milestone scope:** a portable Rust core foundation with a future Android
-device side and macOS host side. This matrix is intentionally conservative:
-source portability is not the same as a validated product platform.
+**Milestone scope:** a portable Rust core foundation plus an unvalidated thin
+Android/macOS pairing and reconnect slice. This matrix is intentionally
+conservative: buildability is not the same as a validated product platform.
 
 ## 1. Support levels
 
@@ -18,8 +18,8 @@ source portability is not the same as a validated product platform.
 | Platform/role | Portable core | Platform adapter/app | Permissions and system constraints | Evidence/status |
 | --- | --- | --- | --- | --- |
 | Linux CI/reference host | **Implemented target**: library is standard Rust with no OS-specific source. | No desktop UI, capture, or input adapter. | Requires pinned Rust `1.85.0` and the committed lockfile. | `cargo test --locked` is the shared health check; clean Linux validation is required at the decision gate. |
-| macOS host | **Build target**; no macOS-specific code in core. | **Scaffolded/unverified**: no Swift/Objective-C app, ScreenCaptureKit/CGDisplayStream path, `CGEvent` path, bundle, or entitlements. | Screen Recording is required for capture; Accessibility/Input Monitoring is required for synthetic input. TCC state, code signing, hardened runtime, notarization, Apple Silicon/Intel, and firewall behavior must be tested. | Not supported as a product host until a physical vertical slice passes. |
-| Android physical device | **Build target/scaffolded**; no Android target or JNI/NDK bridge. | **Scaffolded/unverified**: no APK/agent, capture, input, pairing, or lifecycle integration. | MediaProjection consent, foreground/background limits, battery/thermal behavior, OEM/API variation, and Accessibility or another input path must be handled. ADB, if selected, requires developer options, USB debugging, and user-approved host keys. | Emulator-only evidence is not product support. |
+| macOS host | **Build target**; no macOS-specific behavior in core. | **Thin slice built/unverified**: Swift menu-bar app, Keychain identity, QR window, Bonjour/TLS listener/browser, and Rust FFI link state; no capture/input bundle or signing. | Screen Recording is required for capture; Accessibility/Input Monitoring is required for synthetic input. TCC state, code signing, hardened runtime, notarization, Apple Silicon/Intel, and firewall behavior must be tested. | Physical pairing/reconnect not run; not a product-support claim. |
+| Android physical device | **Build target**; Rust JNI bridge builds for arm64. | **Thin slice built/unverified**: debug APK, Keystore identity, QR scanner, pinned TLS pairing, NSD, and connected-device foreground service; capture path remains separate. | MediaProjection consent, foreground/background limits, battery/thermal behavior, OEM/API variation, and Accessibility or another input path must be handled. ADB, if selected, requires developer options, USB debugging, and user-approved host keys. | Xiaomi `22101320I` is the declared trial device; no physical pass yet. |
 | Android emulator | Core can be exercised by a host test, but device behavior is not validated. | Not an acceptance target. | Emulator timing/capture/input does not represent physical-device power, thermal, OEM, or permission behavior. | Useful for development only; not a pilot candidate. |
 | Windows/iOS/other | No platform code or compatibility promise. | **Not supported** for this milestone. | No entitlement, input, capture, or release plan. | Defer until the Android/macOS contract is validated. |
 
@@ -62,8 +62,9 @@ The macOS side must own:
 - translation of permission revocation, app termination, display loss, and input
   refusal into fail-closed session transitions.
 
-No current crate declares macOS entitlements or links Apple frameworks. A macOS
-build of the portable core would not prove that screen capture or input works.
+The thin macOS package links Apple frameworks for its menu-bar, Bonjour, and TLS
+adapter, but declares no product entitlements. A successful package build does
+not prove that screen capture, input, pairing, or sleep/wake recovery works.
 
 ## 5. Linux as shared repository health
 

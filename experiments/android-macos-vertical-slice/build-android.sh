@@ -40,7 +40,22 @@ if [[ ! -d "$SDK_ROOT/platforms" ]]; then
 fi
 
 printf 'sdk.dir=%s\n' "$SDK_ROOT" > "$ROOT/local.properties"
+NDK_ROOT="${ANDROID_NDK_ROOT:-${ANDROID_NDK_HOME:-}}"
+if [[ -z "$NDK_ROOT" ]]; then
+    for candidate in \
+        "$SDK_ROOT/ndk/28.2.13676358" \
+        "$HOME/Library/Android/sdk/ndk/28.2.13676358" \
+        "/opt/homebrew/share/android-commandlinetools/ndk/28.2.13676358"; do
+        if [[ -f "$candidate/source.properties" ]]; then
+            NDK_ROOT="$candidate"
+            break
+        fi
+    done
+fi
 GRADLE_ARGS=(--no-daemon assembleDebug)
+if [[ -n "$NDK_ROOT" ]]; then
+    GRADLE_ARGS+=("-PidroidNdkPath=$NDK_ROOT")
+fi
 if [[ "${IDROID_ANDROID_OFFLINE:-0}" == "1" ]]; then
     GRADLE_ARGS+=(--offline)
 fi

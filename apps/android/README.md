@@ -1,7 +1,10 @@
 # Android application scaffold
 
-**Status:** planning scaffold only. No Gradle project, APK, Android source,
-device agent, or instrumented tests exist in this directory.
+**Status:** the platform-owned thin-slice code currently lives in
+`experiments/android-macos-vertical-slice`. It includes a Keystore identity,
+CameraX/ML Kit QR scanning, pinned TLS 1.3 pairing, NSD
+advertising/browsing, and a connected-device foreground service. This directory
+remains the product ownership scaffold.
 
 **Owner:** Android platform owner (TBD).
 
@@ -26,5 +29,5 @@ the portable-core boundary.
 - Unit, instrumented, and device-matrix tests cover the adapter without
   treating an emulator-only result as device support.
 
-No Android support claim should be made until the project, artifact, and test
-evidence exist.
+No Android support claim should be made until the project, artifact, and
+physical-device test evidence exist.

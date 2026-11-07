@@ -1,0 +1,12 @@
+[package]
+name = "idroid-core-ffi"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+path = "src/lib.rs"
+
+[dependencies]
+idroid-core = { path = "../core" }

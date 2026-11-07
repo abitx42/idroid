@@ -1,5 +1,7 @@
 # iDroid
 
+> High-performance cross-platform continuity bridge between Android and macOS, powered by a portable Rust core.
+
 ## Status
 
 This repository is at the **portable Rust core foundation** milestone. The
@@ -18,6 +20,23 @@ cargo test --locked
 
 `Cargo.lock` and `rust-toolchain.toml` are committed so that this check uses a
 known Rust channel and a locked dependency graph.
+
+## Repository Structure
+
+```text
+├── core/                                    # Portable Rust core library (protocol, state machines, session management)
+├── core-ffi/                                # C-ABI and JNI FFI bindings for macOS and Android integration
+├── apps/
+│   ├── android/                             # Android application scaffold and documentation
+│   └── mac-native/                          # Swift macOS menu bar adapter and native link
+├── docs/                                    # System architecture, control plane, and pairing specifications
+│   ├── ARCHITECTURE.md                      # Milestone architecture and trust boundaries
+│   ├── CONTROL-PLANE-V1.md                  # Control plane state machine and versioning specification
+│   ├── DISCOVERY-PAIRING-V1.md              # Discovery race, QR pairing, and token semantics
+│   └── THIN-SLICE-TRIAL.md                  # Android <-> macOS integration trial logs and evidence
+└── experiments/
+    └── android-macos-vertical-slice/        # End-to-end Kotlin/C++/TLS/NSD integration experiment
+```
 
 ## Setup
 
@@ -87,9 +106,21 @@ The current `core/` crate provides:
   derived user-facing headlines;
 - an in-memory session lifecycle with heartbeat timeout, reconnect grace,
   duplicate replacement, termination, and stale cleanup;
-- strict version-one binary protocol framing and malformed-frame errors; and
+- strict version-one binary protocol framing and malformed-frame errors;
+- an Android/macOS control-plane contract with capability negotiation, live
+  backend updates, injected-clock reconnect timing, event logging, and
+  media-session state machines;
+- deterministic discovery candidates, QR pairing-token rules, trust-store
+  boundaries, and authenticated candidate-race contracts; and
 - dependency-injected identity, pairing, session-authentication, replay, and
   message-verification interfaces with deterministic fixtures for tests.
+
+The thin platform slice under `apps/mac-native/` and
+`experiments/android-macos-vertical-slice/` adds a buildable menu-bar Mac
+adapter, a buildable arm64 Android debug APK, Keychain/Keystore identities,
+QR pairing, TLS 1.3, Bonjour/NSD, and a Rust C-ABI/JNI link-state bridge.
+Physical pairing and reconnect evidence is tracked separately in
+[`docs/THIN-SLICE-TRIAL.md`](docs/THIN-SLICE-TRIAL.md).
 
 The fixtures are test doubles, not cryptography. The protocol codec does not
 provide authentication, authorization, encryption, transport retries, or
@@ -99,14 +130,14 @@ stream handling.
 
 The following are **not** implemented or verified by this repository:
 
-- Product Android agent behavior, capture, input delivery, permissions, or OEM
-  compatibility. The experimental debug APK scaffold is buildable but has no
-  physical-device evidence;
-- native macOS or Tauri application behavior, permissions, signing, or
-  notarization;
-- sockets, discovery, pairing UX, WebRTC, USB/ADB, or network interoperability;
-- production cryptography, key storage, authorization, revocation, replay
-  protection, or audit logging;
+- Product Android capture, input delivery, permissions, lifecycle, or OEM
+  compatibility. The thin pairing/reconnect APK has no physical-device
+  evidence;
+- native macOS capture/input behavior, permissions, signing, or notarization;
+- physical network interoperability, WebRTC, USB/ADB, or gateway/BLE discovery;
+- protobuf or another production wire encoding for the control-plane contract;
+- production cryptography, certificate lifecycle, authorization/revocation
+  policy, replay protection, or audit logging;
 - durable persistence, crash recovery, or cross-process coordination;
 - latency, throughput, battery, thermal, memory, or soak claims; and
 - deployable artifacts or a deployment target.

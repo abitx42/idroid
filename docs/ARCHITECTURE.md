@@ -1,6 +1,6 @@
 # iDroid milestone architecture
 
-**Status:** engineering baseline for the portable-core milestone
+**Status:** engineering baseline for the portable-core and control-plane-contract milestone
 
 This document describes what the repository can do today and the seams that the
 Android and macOS products must fill next. “Implemented” means that the behavior
@@ -75,13 +75,16 @@ permission, or persist a session.
 | `device_state` | Orthogonal connection, capture, input, and permission dimensions plus a derived headline for Nearby, Pairing, Connecting, Connected, Sharing paused, Reconnecting, Offline, and Permission required. | `core/src/device_state.rs`; unit tests | **Implemented** |
 | `session` | In-memory lifecycle for connected, temporarily disconnected, offline, and terminated sessions; heartbeat, reconnect grace, stale cleanup, duplicate replacement, and monotonic timestamps. | `core/src/session.rs`; unit/integration tests | **Implemented** |
 | `protocol` | Strict V1 binary framing with a magic value, version, message kind, bounded length, lifecycle, pairing, status, input, permission, capture, error, and data bodies, encode/decode round trips, and malformed-frame errors. | `core/src/protocol.rs`; unit/integration tests | **Implemented** |
+| `control_plane` | Typed Android/macOS Hello, capability, session, heartbeat, backend-change, error, and close contract plus deterministic link and media-session state machines. | `core/src/control_plane.rs`; `core/tests/control_plane.rs` | **Implemented contract; transport unimplemented** |
+| `discovery`/`pairing`/`connections` | Candidate-source and pairing-store traits, QR token lifetime/attempt rules, per-token lockout, trust/revocation boundary, deterministic candidate race, post-authentication connection arbitration, and discovery/pairing event vocabulary. | `core/src/discovery.rs`, `core/src/pairing.rs`, `core/src/connections.rs`; integration tests | **Implemented contract; platform adapters unimplemented** |
+| `core-ffi` | C ABI for driving `LinkMachine` from Swift/JNI, with state/result mapping and reconnect timing. | `core-ffi/`; ABI unit test | **Implemented bridge; physical use unverified** |
 | `security` | Interfaces for identity storage/revocation, pairing nonces/codes, authenticated sessions, replay protection, and message verification plus deterministic exact-byte fixtures. | `core/src/security.rs`; tests | **Scaffolded; fixtures are not security** |
 | crate boundary | Library exports the core types and forbids Rust `unsafe` code. | `core/src/lib.rs` | **Implemented** |
 
-The core has no dependency on an async runtime, socket library, GUI toolkit,
-Android SDK, Apple framework, JNI, or Objective-C runtime. This is intentional:
-the foundation can be built and tested in a Linux environment without carrying
-platform code into every consumer.
+The portable `core/` crate has no dependency on an async runtime, socket
+library, GUI toolkit, Android SDK, Apple framework, JNI, or Objective-C runtime.
+The separate `core-ffi/` crate is the explicit unsafe C-ABI boundary consumed by
+the thin Swift and Android JNI adapters.
 
 ## 3. Protocol contract
 
@@ -119,6 +122,53 @@ must supply those semantics before a frame can drive a real device.
 The 64 KiB limit is a frame-safety limit. A `Data` frame also carries an
 8-byte session ID, so an adapter must leave room for framing overhead when it
 chooses a data chunk size. No fragmentation or streaming contract exists yet.
+
+### 3.1 Android/macOS control-plane contract
+
+The newer control-plane contract is defined independently of the legacy binary
+codec in [`CONTROL-PLANE-V1.md`](CONTROL-PLANE-V1.md) and typed in
+`core/src/control_plane.rs`. It treats the Android application as the single
+peer of the Mac. A helper process is an Android-side capability/backend and is
+never a second paired identity.
+
+The typed contract covers version-range and transport-fingerprint binding,
+complete capability snapshots and live updates, request/result correlation,
+heartbeat vocabulary, backend changes, and the v1 error codes. It also contains
+two deterministic state machines:
+
+- `LinkMachine`: `Searching`, `Connecting`, `Handshaking`, `Ready`,
+  `Degraded`, and `Lost`, with three/six-second heartbeat thresholds and a
+  Mac-clock-only reconnect metric; and
+- `MediaSessionMachine`: `Idle`, `Starting`, `Active`, `Switching`, and
+  `Ended`, including consent-gated fallback from the helper to
+  MediaProjection.
+
+`Clock` is an injected boundary, with `ManualClock` for tests. A macOS adapter
+must implement it with Darwin `CLOCK_MONOTONIC`, which includes system-sleep
+time; `CLOCK_UPTIME_RAW`/`mach_absolute_time()` and an unverified `Instant`
+implementation must not drive wake-time measurements. `ControlPlaneEventLog`
+records transition and message-kind events without payloads.
+
+The contract remains separate from production wire encoding, but the thin
+platform slice now supplies TLS/Bonjour/NSD/socket adapters around it. The
+physical pairing and reconnect procedure is documented in
+[`THIN-SLICE-TRIAL.md`](THIN-SLICE-TRIAL.md); no physical pass is claimed yet.
+
+### 3.2 Discovery and pairing contract
+
+[`DISCOVERY-PAIRING-V1.md`](DISCOVERY-PAIRING-V1.md) defines the next boundary.
+`CandidateSource` returns address hints from cached addresses, Bonjour, or a
+gateway probe. `PairingStore` owns durable peer trust, forget, and revocation.
+`DiscoveryRace` accepts a peer only after the authenticated fingerprint matches
+the requested paired identity; a network change invalidates the race generation
+and its candidates. Its link-integrated entry point advances `LinkMachine`
+through `Connecting` and `Handshaking`, returns failed races to `Searching`,
+and records those transitions in `ControlPlaneEventLog`.
+
+The core contains scripted sources/connectors and an in-memory store for the
+16 discovery/pairing/arbitration contract vectors. The thin slice supplies Bonjour, NSD, TLS 1.3, QR rendering,
+Keychain/Keystore identity, and the FFI/JNI link boundary. BLE, media, input,
+and production packaging remain outside this milestone.
 
 ## 4. Session state machine
 

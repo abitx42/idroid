@@ -1,17 +1,26 @@
 #![forbid(unsafe_code)]
 
+pub mod clock;
+pub mod connections;
+pub mod control_plane;
 pub mod device;
 pub mod device_state;
+pub mod discovery;
 pub mod ids;
+pub mod pairing;
 pub mod protocol;
 pub mod security;
 pub mod session;
 
+pub use clock::{Clock, ManualClock};
+pub use control_plane::*;
 pub use device::{DeviceCapabilities, DeviceKind, DeviceProfile, DeviceRegistry};
 pub use device_state::{
     CaptureHealth, ConnectionState, DeviceHeadline, DeviceState, InputHealth, PermissionStatus,
 };
+pub use discovery::*;
 pub use ids::{DeviceId, IdError, SessionId};
+pub use pairing::*;
 pub use protocol::{
     Capture, CaptureState, CaptureStateMessage, DeviceStatus, DeviceStatusMessage, ErrorCode,
     ErrorMessage, HeartbeatMessage, KeyAction, KeyboardInput, MessageBody, MessageKind,

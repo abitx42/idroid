@@ -1,3 +1,5 @@
 /target/
+/apps/mac-native/.build/
 .env
 .DS_Store
+.opencode/

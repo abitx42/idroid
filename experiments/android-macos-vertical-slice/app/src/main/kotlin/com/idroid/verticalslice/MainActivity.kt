@@ -17,6 +17,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
     private lateinit var host: EditText
@@ -24,6 +25,7 @@ class MainActivity : Activity() {
     private lateinit var pairingCode: EditText
     private lateinit var status: TextView
     private lateinit var startButton: Button
+    private val pairingExecutor = Executors.newSingleThreadExecutor()
 
     private val diagnosticListener: (DiagnosticState.Snapshot) -> Unit = { snapshot ->
         runOnUiThread {
@@ -71,6 +73,17 @@ class MainActivity : Activity() {
                 requestProjectionConsent()
             }
         }
+        val pairButton = Button(this).apply {
+            text = "Scan Mac pairing QR"
+            setOnClickListener { startPairingScanner() }
+        }
+        val forgetButton = Button(this).apply {
+            text = "Forget paired Mac"
+            setOnClickListener {
+                AndroidIdentityStore.forgetMac(this@MainActivity)
+                status.text = "Mac trust record forgotten"
+            }
+        }
         val stop = Button(this).apply {
             text = "Stop capture"
             setOnClickListener {
@@ -91,6 +104,7 @@ class MainActivity : Activity() {
                 text = "iDroid experimental Android-to-Mac video slice"
                 textSize = 20f
             })
+            addView(pairButton); addView(forgetButton)
             addView(host); addView(port); addView(pairingCode)
             addView(startButton); addView(stop); addView(status)
         })
@@ -160,6 +174,14 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == requestNearby) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                startActivityForResult(Intent(this, PairingScanActivity::class.java), requestPairing)
+            } else {
+                status.text = "Nearby-device permission is required for discovery"
+            }
+            return
+        }
         if (requestCode != requestNotifications) return
         if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
             launchProjectionConsent()
@@ -175,6 +197,25 @@ class MainActivity : Activity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == requestPairing) {
+            if (resultCode != RESULT_OK) return
+            val encoded = data?.getStringExtra(PairingScanActivity.resultPayload) ?: return
+            status.text = "Pairing with Mac…"
+            pairingExecutor.execute {
+                try {
+                    val payload = PairingPayload.parse(encoded)
+                    val fingerprint = PairingTransport.pair(this, payload)
+                    runOnUiThread {
+                        status.text = "Paired Mac: ${fingerprint.take(24)}…\nStarting continuity service"
+                        val serviceIntent = Intent(this, ContinuityService::class.java)
+                        if (Build.VERSION.SDK_INT >= 26) startForegroundService(serviceIntent) else startService(serviceIntent)
+                    }
+                } catch (_: Throwable) {
+                    runOnUiThread { status.text = "Pairing failed; scan a fresh Mac QR" }
+                }
+            }
+            return
+        }
         if (requestCode != requestCapture) return
         if (resultCode != RESULT_OK || data == null) {
             pairingCode.text.clear()
@@ -213,7 +254,18 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         DiagnosticState.removeListener(diagnosticListener)
         if (::pairingCode.isInitialized) pairingCode.text.clear()
+        pairingExecutor.shutdownNow()
         super.onDestroy()
+    }
+
+    private fun startPairingScanner() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.NEARBY_WIFI_DEVICES), requestNearby)
+            return
+        }
+        startActivityForResult(Intent(this, PairingScanActivity::class.java), requestPairing)
     }
 
     private fun report(
@@ -234,5 +286,7 @@ class MainActivity : Activity() {
         private const val tag = "iDroidCapture"
         private const val requestCapture = 41
         private const val requestNotifications = 42
+        private const val requestPairing = 43
+        private const val requestNearby = 44
     }
 }

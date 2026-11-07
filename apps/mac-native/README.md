@@ -1,7 +1,9 @@
 # Native macOS application scaffold
 
-**Status:** planning scaffold only. No Xcode project, Swift source, native
-bundle, or macOS application tests exist in this directory.
+**Status:** thin experimental slice. The Swift Package builds a menu-bar
+application with a Keychain-backed self-signed identity, QR pairing window,
+Bonjour listener/browser, TLS 1.3 connection parameters, and the Rust
+`idroid-core` link state machine through `core-ffi`.
 
 **Owner:** macOS platform owner (TBD).
 
@@ -26,5 +28,17 @@ explicit adapter boundary rather than moving platform behavior into `core/`.
 - Native unit/UI tests and a clean-core integration test identify exactly what
   behavior is covered.
 
-Until those artifacts and evidence exist, this scaffold must not be described
-as a working macOS application.
+This is not a signed release application. The first identity is generated with
+the system OpenSSL executable and imported into Keychain; the pairing listener
+accepts an unknown client certificate only for the one-time QR exchange, then
+restarts with the stored Android certificate pin. The control-plane log is
+written to `~/Library/Application Support/iDroid/control-plane.ndjson`.
+
+Build on macOS:
+
+```sh
+bash apps/mac-native/build-mac.sh
+```
+
+The package has no committed build artifacts. A physical Android pairing and
+reconnect run is still required before this is called a working product.

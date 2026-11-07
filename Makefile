@@ -4,12 +4,18 @@ CARGO ?= cargo
 CARGO_LOCKED := --locked
 CARGO_WORKSPACE := --workspace --all-targets
 
-.PHONY: test lint clean test-mac test-offline
+.PHONY: test lint check-clock-source clean test-mac test-offline
 
 test:
 	$(CARGO) test $(CARGO_LOCKED) --offline $(CARGO_WORKSPACE)
 
-lint:
+check-clock-source:
+	@if grep -R -n -E 'std::time::Instant|Instant::now|use std::time' core/src; then \
+		printf '%s\n' 'core timing must use the injected Clock trait' >&2; \
+		exit 1; \
+	fi
+
+lint: check-clock-source
 	$(CARGO) fmt --all -- --check
 	$(CARGO) clippy $(CARGO_WORKSPACE) $(CARGO_LOCKED) -- -D warnings
 
