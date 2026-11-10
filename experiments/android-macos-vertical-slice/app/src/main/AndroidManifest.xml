@@ -26,6 +26,10 @@
             android:name=".PairingScanActivity"
             android:screenOrientation="portrait"
             android:exported="false" />
+        <activity
+            android:name=".instagram.ExportActivity"
+            android:label="iDroid IG Export"
+            android:exported="false" />
         <service
             android:name=".CaptureService"
             android:exported="false"

@@ -58,4 +58,6 @@ dependencies {
     implementation("androidx.camera:camera-view:1.4.2")
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
     implementation("io.github.webrtc-sdk:android:125.6422.07")
+    // Required by ExportActivity for DocumentFile display name resolution
+    implementation("androidx.documentfile:documentfile:1.0.1")
 }
