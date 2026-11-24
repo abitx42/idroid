@@ -17,7 +17,6 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import com.idroid.verticalslice.instagram.ExportActivity
 import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
@@ -108,14 +107,6 @@ class MainActivity : Activity() {
             addView(pairButton); addView(forgetButton)
             addView(host); addView(port); addView(pairingCode)
             addView(startButton); addView(stop); addView(status)
-            // ── Instagram Export Optimizer ────────────────────────────────────
-            addView(Button(this@MainActivity).apply {
-                text = "📸  Instagram Export Optimizer"
-                setOnClickListener {
-                    startActivity(Intent(this@MainActivity,
-                        com.idroid.verticalslice.instagram.ExportActivity::class.java))
-                }
-            })
         })
     }
 
