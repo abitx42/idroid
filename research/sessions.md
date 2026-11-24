@@ -143,4 +143,23 @@ and persistent session identifier (`A-008`, `A-010`).
 **Left open:** A-004 / A-011 state machine refinement on Android, A-006 native
 Keychain generation in Swift, A-009 NSD resolution serialization.
 
+## S-010 — 2026-11-25 — Phase 3 discovery modernization and lifecycle unification
+
+**Asked:** next step.
+
+**Produced:** modernized Android `NsdDiscovery` with API 34+ `registerServiceInfoCallback`,
+serialized resolve fallback queue, role filtering (`role=mac`), and 1-second
+deduplication window (`A-009`); unified session lifecycle model by adding
+`SessionConfig::for_control_plane()` aligned with `LinkMachine` timings (`A-003`);
+documented `apps/mac-tauri` planning scaffold in root `README.md` (`A-020`).
+
+**Findings:** none new.
+
+**Audit:** A-003, A-009, A-020 fixed. Baseline now 81 tests passing. Verified
+`build-android.sh` (:app:assembleDebug) and `make test`.
+
+**Left open:** A-004/A-011 Android state machine transitions, A-006 native Keychain
+RSA generation without openssl CLI, A-012 two-sided ConnectionArbiter.
+
+
 

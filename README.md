@@ -28,7 +28,8 @@ known Rust channel and a locked dependency graph.
 ├── core-ffi/                                # C-ABI and JNI FFI bindings for macOS and Android integration
 ├── apps/
 │   ├── android/                             # Android application scaffold and documentation
-│   └── mac-native/                          # Swift macOS menu bar adapter and native link
+│   ├── mac-native/                          # Swift macOS menu bar adapter and native link
+│   └── mac-tauri/                           # Planning scaffold and scope marker for alternate desktop shell
 ├── docs/                                    # System architecture, control plane, and pairing specifications
 │   ├── ARCHITECTURE.md                      # Milestone architecture and trust boundaries
 │   ├── CONTROL-PLANE-V1.md                  # Control plane state machine and versioning specification

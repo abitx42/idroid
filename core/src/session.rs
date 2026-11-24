@@ -61,6 +61,18 @@ impl SessionConfig {
     pub const fn stale_after_ms(self) -> u64 {
         self.stale_after_ms
     }
+
+    /// Aligns session lifecycle timeouts with the active control-plane
+    /// [`LinkMachine`] timing parameters ([`crate::control_plane::DEGRADE_AFTER_MS`]
+    /// and [`crate::control_plane::LOSE_AFTER_MS`]).
+    pub const fn for_control_plane() -> Self {
+        Self::new(
+            crate::control_plane::DEGRADE_AFTER_MS,
+            crate::control_plane::LOSE_AFTER_MS
+                .saturating_sub(crate::control_plane::DEGRADE_AFTER_MS),
+            crate::control_plane::LOSE_AFTER_MS * 10,
+        )
+    }
 }
 
 impl Default for SessionConfig {
@@ -660,5 +672,19 @@ mod tests {
             manager.terminate(id, time(103), TerminationReason::Requested),
             Err(SessionError::AlreadyTerminated(id))
         );
+    }
+
+    #[test]
+    fn session_config_for_control_plane_matches_link_timings() {
+        let config = SessionConfig::for_control_plane();
+        assert_eq!(
+            config.heartbeat_timeout_ms(),
+            crate::control_plane::DEGRADE_AFTER_MS
+        );
+        assert_eq!(
+            config.reconnect_grace_ms(),
+            crate::control_plane::LOSE_AFTER_MS - crate::control_plane::DEGRADE_AFTER_MS
+        );
+        assert!(config.stale_after_ms() >= crate::control_plane::LOSE_AFTER_MS);
     }
 }
