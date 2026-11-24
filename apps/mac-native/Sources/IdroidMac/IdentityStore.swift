@@ -51,79 +51,207 @@ struct MacIdentity {
     }
 
     private static func generateAndImportIdentity() throws -> SecIdentity {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("idroid-identity-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-
-        let key = directory.appendingPathComponent("key.pem")
-        let certificate = directory.appendingPathComponent("certificate.pem")
-        let bundle = directory.appendingPathComponent("identity.p12")
-        let password = UUID().uuidString + UUID().uuidString
-
-        try runOpenSSL(arguments: [
-            // macOS 26's SecPKCS12Import rejects this EC PKCS#12 shape while
-            // importing an RSA identity correctly. TLS 1.3 still provides the
-            // transport protocol; the certificate key type is independent.
-            "req", "-x509", "-newkey", "rsa:2048",
-            "-nodes", "-keyout", key.path, "-out", certificate.path, "-days", "3650",
-            "-subj", "/CN=iDroid Mac/",
-        ])
-        try runOpenSSL(arguments: [
-            "pkcs12", "-export", "-out", bundle.path, "-inkey", key.path,
-            "-in", certificate.path, "-passout", "pass:\(password)",
-            "-name", keychainLabel,
-        ])
-
-        let data = try Data(contentsOf: bundle)
-        var imported: CFArray?
-        let options: [String: Any] = [kSecImportExportPassphrase as String: password]
-        guard SecPKCS12Import(data as CFData, options as CFDictionary, &imported) == errSecSuccess,
-              let items = imported as? [[String: Any]],
-              let value = items.first?[kSecImportItemIdentity as String],
-              CFGetTypeID(value as CFTypeRef) == SecIdentityGetTypeID() else {
-            throw IdentityError.importFailed
-        }
-        let identity = value as! SecIdentity
-
-        let item: [String: Any] = [
-            kSecClass as String: kSecClassIdentity,
-            kSecValueRef as String: identity,
+        // Clean up any stale keys or certificates with this label before generating a new pair
+        let delKey: [String: Any] = [
+            kSecClass as String: kSecClassKey,
             kSecAttrLabel as String: keychainLabel,
         ]
-        let status = SecItemAdd(item as CFDictionary, nil)
+        SecItemDelete(delKey as CFDictionary)
+        let delCert: [String: Any] = [
+            kSecClass as String: kSecClassCertificate,
+            kSecAttrLabel as String: keychainLabel,
+        ]
+        SecItemDelete(delCert as CFDictionary)
+
+        // 1. Generate RSA 2048 key directly in Keychain
+        let keyParams: [String: Any] = [
+            kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
+            kSecAttrKeySizeInBits as String: 2048,
+            kSecPrivateKeyAttrs as String: [
+                kSecAttrIsPermanent as String: true,
+                kSecAttrLabel as String: keychainLabel,
+                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            ],
+        ]
+        var error: Unmanaged<CFError>?
+        guard let privateKey = SecKeyCreateRandomKey(keyParams as CFDictionary, &error) else {
+            throw IdentityError.keyGenerationFailed
+        }
+        guard let publicKey = SecKeyCopyPublicKey(privateKey),
+              let pubKeyData = SecKeyCopyExternalRepresentation(publicKey, &error) as Data? else {
+            throw IdentityError.keyGenerationFailed
+        }
+
+        // 2. Build self-signed X.509 certificate (RFC 5280)
+        let sha256WithRSA = ASN1.sequence([
+            ASN1.objectIdentifier([0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B]),
+            ASN1.null(),
+        ])
+        let rsaEncryption = ASN1.sequence([
+            ASN1.objectIdentifier([0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01]),
+            ASN1.null(),
+        ])
+        let spki = ASN1.sequence([
+            rsaEncryption,
+            ASN1.bitString(pubKeyData),
+        ])
+        let name = ASN1.sequence([
+            ASN1.set([
+                ASN1.sequence([
+                    ASN1.objectIdentifier([0x55, 0x04, 0x03]),
+                    ASN1.utf8String("iDroid Mac"),
+                ]),
+            ]),
+        ])
+        let serial = ASN1.integer(Data((0..<16).map { _ in UInt8.random(in: 0...255) }))
+        let now = Date()
+        let validity = ASN1.sequence([
+            ASN1.utcTime(now),
+            ASN1.utcTime(now.addingTimeInterval(3650 * 86400)), // 10 years
+        ])
+        let version = ASN1.explicit(tag: 0, ASN1.integer(Data([0x02]))) // v3
+
+        let tbs = ASN1.sequence([
+            version,
+            serial,
+            sha256WithRSA,
+            name,
+            validity,
+            name,
+            spki,
+        ])
+
+        guard let signature = SecKeyCreateSignature(
+            privateKey,
+            .rsaSignatureMessagePKCS1v15SHA256,
+            tbs as CFData,
+            &error
+        ) as Data? else {
+            throw IdentityError.signatureFailed
+        }
+
+        let certData = ASN1.sequence([
+            tbs,
+            sha256WithRSA,
+            ASN1.bitString(signature),
+        ])
+
+        guard let certificate = SecCertificateCreateWithData(nil, certData as CFData) else {
+            throw IdentityError.certificateCreationFailed
+        }
+
+        // 3. Store certificate in Keychain with matching label
+        let certItem: [String: Any] = [
+            kSecClass as String: kSecClassCertificate,
+            kSecValueRef as String: certificate,
+            kSecAttrLabel as String: keychainLabel,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        let status = SecItemAdd(certItem as CFDictionary, nil)
         guard status == errSecSuccess || status == errSecDuplicateItem else {
             throw IdentityError.keychainWriteFailed(status)
         }
-        return loadIdentity() ?? identity
+
+        if let identity = loadIdentity() {
+            return identity
+        }
+
+        guard let directIdentity = SecIdentityCreate(nil, certificate, privateKey) else {
+            throw IdentityError.identityCreationFailed
+        }
+        return directIdentity
+    }
+}
+
+private enum ASN1 {
+    static func sequence(_ elements: [Data]) -> Data {
+        let payload = elements.reduce(Data(), +)
+        return wrap(tag: 0x30, payload: payload)
     }
 
-    private static func runOpenSSL(arguments: [String]) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
-        process.arguments = arguments
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw IdentityError.opensslFailed
+    static func set(_ elements: [Data]) -> Data {
+        let payload = elements.reduce(Data(), +)
+        return wrap(tag: 0x31, payload: payload)
+    }
+
+    static func integer(_ value: Data) -> Data {
+        var val = value
+        if let first = val.first, first >= 0x80 {
+            val.insert(0x00, at: 0)
         }
+        return wrap(tag: 0x02, payload: val)
+    }
+
+    static func bitString(_ data: Data) -> Data {
+        var payload = Data([0x00])
+        payload.append(data)
+        return wrap(tag: 0x03, payload: payload)
+    }
+
+    static func null() -> Data {
+        return Data([0x05, 0x00])
+    }
+
+    static func objectIdentifier(_ oid: [UInt8]) -> Data {
+        return wrap(tag: 0x06, payload: Data(oid))
+    }
+
+    static func utf8String(_ string: String) -> Data {
+        return wrap(tag: 0x0C, payload: Data(string.utf8))
+    }
+
+    static func utcTime(_ date: Date) -> Data {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyMMddHHmmss'Z'"
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        let str = formatter.string(from: date)
+        return wrap(tag: 0x17, payload: Data(str.utf8))
+    }
+
+    static func explicit(tag: UInt8, _ payload: Data) -> Data {
+        return wrap(tag: 0xA0 | tag, payload: payload)
+    }
+
+    static func wrap(tag: UInt8, payload: Data) -> Data {
+        var result = Data([tag])
+        let length = payload.count
+        if length < 0x80 {
+            result.append(UInt8(length))
+        } else if length <= 0xFF {
+            result.append(contentsOf: [0x81, UInt8(length)])
+        } else if length <= 0xFFFF {
+            result.append(contentsOf: [0x82, UInt8(length >> 8), UInt8(length & 0xFF)])
+        } else {
+            result.append(contentsOf: [
+                0x84,
+                UInt8((length >> 24) & 0xFF),
+                UInt8((length >> 16) & 0xFF),
+                UInt8((length >> 8) & 0xFF),
+                UInt8(length & 0xFF),
+            ])
+        }
+        result.append(payload)
+        return result
     }
 }
 
 enum IdentityError: LocalizedError {
     case certificateUnavailable
-    case importFailed
+    case keyGenerationFailed
+    case signatureFailed
+    case certificateCreationFailed
+    case identityCreationFailed
     case keychainWriteFailed(OSStatus)
-    case opensslFailed
 
     var errorDescription: String? {
         switch self {
         case .certificateUnavailable: return "Mac certificate is unavailable"
-        case .importFailed: return "Mac identity import failed"
+        case .keyGenerationFailed: return "Mac key generation failed"
+        case .signatureFailed: return "Mac certificate signing failed"
+        case .certificateCreationFailed: return "Mac certificate creation failed"
+        case .identityCreationFailed: return "Mac identity creation failed"
         case .keychainWriteFailed(let status): return "Mac Keychain write failed (\(status))"
-        case .opensslFailed: return "Mac identity generation failed"
         }
     }
 }

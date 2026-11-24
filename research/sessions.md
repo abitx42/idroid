@@ -179,6 +179,19 @@ on macOS to prevent dial thrashing and race conditions (`A-012`).
 
 **Left open:** A-006 native Keychain RSA generation in Swift, A-019 abstraction pruning.
 
+## S-012 — 2026-11-25 — Phase 5 Native Keychain identity & ASN.1 self-signed certificate
+
+**Asked:** next continue.
+
+**Produced:** eliminated `/usr/bin/openssl` and `Process` dependency in `apps/mac-native/Sources/IdroidMac/IdentityStore.swift` (`A-006`); implemented native RSA 2048 key generation via `SecKeyCreateRandomKey` directly in Keychain with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`; constructed self-signed X.509 v3 certificate via lightweight ASN.1 DER encoder and signed using `SecKeyCreateSignature(privateKey, .rsaSignatureMessagePKCS1v15SHA256, ...)`; imported certificate to Keychain and resolved `SecIdentity`; verified persistence, idempotency, and clean bundle codesigning.
+
+**Findings:** none new.
+
+**Audit:** A-006 fixed. Verified: `make test` (81 tests pass), standalone Swift persistence test, and `apps/mac-native/build-mac.sh` (signed bundle).
+
+**Left open:** A-019 abstraction pruning in `core/src/discovery.rs`, `pairing.rs`, `connections.rs`.
+
+
 
 
 
