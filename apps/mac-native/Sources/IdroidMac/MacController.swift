@@ -61,6 +61,7 @@ final class MacController: NSObject {
     private var pathMonitor: NWPathMonitor?
     private var pairPayload: PairingPayload?
     private var rejectedPairingTokens: [String: (attempts: Int, retryAt: Date)] = [:]
+    private var lastDiscoveredDial: [String: Date] = [:]
     private var activeConnection: NWConnection?
     private var activePeerFingerprint: String?
     private var activeInitiator: String?
@@ -238,6 +239,13 @@ final class MacController: NSObject {
 
     private func connectToDiscoveredPeer(_ endpoint: NWEndpoint) {
         guard trustStore.load() != nil else { return }
+        if activeConnection != nil { return }
+        let key = "\(endpoint)"
+        let now = Date()
+        if let previous = lastDiscoveredDial[key], now.timeIntervalSince(previous) < 0.5 {
+            return
+        }
+        lastDiscoveredDial[key] = now
         let connection = NWConnection(to: endpoint, using: makeClientParameters())
         connection.stateUpdateHandler = { [weak self, weak connection] state in
             guard let self else { return }

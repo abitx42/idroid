@@ -45,8 +45,8 @@ Java_com_idroid_verticalslice_NativeCoreLink_00024Companion_nativeNetworkChanged
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_idroid_verticalslice_NativeCoreLink_00024Companion_nativeHandshakeReady(
-    JNIEnv *, jclass, jlong handle, jlong now_ms, jlong session_id) {
+    JNIEnv *, jclass, jlong handle, jlong now_ms, jboolean has_session, jlong session_id) {
     return idroid_link_handshake_ready(
-        reinterpret_cast<IdroidLink *>(handle), static_cast<uint64_t>(now_ms), true,
-        static_cast<uint64_t>(session_id));
+        reinterpret_cast<IdroidLink *>(handle), static_cast<uint64_t>(now_ms),
+        static_cast<bool>(has_session), static_cast<uint64_t>(session_id));
 }

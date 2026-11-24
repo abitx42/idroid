@@ -86,11 +86,18 @@ internal object PairingTransport {
         return reconnect(context, host, AndroidIdentityStore.macPort(context))
     }
 
-    fun reconnect(context: Context, host: String, port: Int): Boolean {
+    fun reconnect(
+        context: Context,
+        host: String,
+        port: Int,
+        existingLink: NativeCoreLink? = null,
+        hasSession: Boolean = false,
+    ): Boolean {
         val fingerprint = AndroidIdentityStore.macFingerprint(context) ?: return false
         val certificate = AndroidIdentityStore.macCertificateDer(context) ?: return false
         val socket = tlsSocket(context, host, port, fingerprint, certificate)
-        val link = NativeCoreLink.create(SystemClock.elapsedRealtime())
+        val ownsLink = existingLink == null
+        val link = existingLink ?: NativeCoreLink.create(SystemClock.elapsedRealtime())
         socket.use { ssl ->
             try {
                 link?.beginConnecting(SystemClock.elapsedRealtime())
@@ -107,14 +114,16 @@ internal object PairingTransport {
                         .getLong("session_id", 0L)
                         .takeIf { it > 0 } ?: SystemClock.elapsedRealtime()
                     link?.transportConnected(SystemClock.elapsedRealtime())
-                    link?.handshakeReady(SystemClock.elapsedRealtime(), sessionId)
+                    link?.handshakeReady(SystemClock.elapsedRealtime(), hasSession, sessionId)
                 }
                 return ready
             } catch (error: Throwable) {
                 runCatching { link?.connectionFailed(SystemClock.elapsedRealtime()) }
                 throw error
             } finally {
-                link?.close()
+                if (ownsLink) {
+                    link?.close()
+                }
             }
         }
     }

@@ -30,6 +30,8 @@ import javax.net.ssl.SSLServerSocket
 class ContinuityService : Service() {
     private val executor = Executors.newCachedThreadPool()
     private val generation = AtomicInteger(0)
+    private val isConnectingOutbound = java.util.concurrent.atomic.AtomicBoolean(false)
+    @Volatile private var hasActiveSession = false
     @Volatile private var server: SSLServerSocket? = null
     @Volatile private var discovery: NsdDiscovery? = null
     @Volatile private var coreLink: NativeCoreLink? = null
@@ -77,7 +79,25 @@ class ContinuityService : Service() {
                 discovery = newDiscovery
                 newDiscovery.startAdvertising(Signaling.defaultPort)
                 newDiscovery.startBrowsing { host, port ->
-                    executor.execute { runCatching { PairingTransport.reconnect(this, host, port) } }
+                    if (isConnectingOutbound.compareAndSet(false, true)) {
+                        executor.execute {
+                            try {
+                                val success = PairingTransport.reconnect(
+                                    this@ContinuityService,
+                                    host,
+                                    port,
+                                    coreLink,
+                                    hasActiveSession,
+                                )
+                                if (success) {
+                                    hasActiveSession = true
+                                }
+                            } catch (_: Throwable) {
+                            } finally {
+                                isConnectingOutbound.set(false)
+                            }
+                        }
+                    }
                 }
 
                 while (generation.get() == currentGen && !newServer.isClosed) {
@@ -130,7 +150,8 @@ class ContinuityService : Service() {
                     return
                 }
                 coreLink?.transportConnected(SystemClock.elapsedRealtime())
-                coreLink?.handshakeReady(SystemClock.elapsedRealtime(), persistentSessionId)
+                coreLink?.handshakeReady(SystemClock.elapsedRealtime(), hasActiveSession, persistentSessionId)
+                hasActiveSession = true
                 val writer = BufferedWriter(OutputStreamWriter(ssl.outputStream, Charsets.UTF_8))
                 writer.write("OK ready\n")
                 writer.flush()
@@ -216,6 +237,8 @@ class ContinuityService : Service() {
 
     override fun onDestroy() {
         generation.incrementAndGet()
+        hasActiveSession = false
+        isConnectingOutbound.set(false)
         networkCallback?.let { callback ->
             val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             runCatching { cm?.unregisterNetworkCallback(callback) }

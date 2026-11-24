@@ -6,15 +6,16 @@ internal class NativeCoreLink private constructor(private val handle: Long) : Au
     fun transportConnected(nowMs: Long) = requireResult(nativeTransportConnected(handle, nowMs))
     fun connectionFailed(nowMs: Long) = requireResult(nativeConnectionFailed(handle, nowMs))
     fun networkChanged(nowMs: Long) = requireResult(nativeNetworkChanged(handle, nowMs))
-    fun handshakeReady(nowMs: Long, sessionId: Long) =
-        requireResult(nativeHandshakeReady(handle, nowMs, sessionId))
+    fun handshakeReady(nowMs: Long, hasSession: Boolean, sessionId: Long) =
+        requireResult(nativeHandshakeReady(handle, nowMs, hasSession, sessionId))
 
     override fun close() {
         nativeFree(handle)
     }
 
     private fun requireResult(value: Int) {
-        check(value == 0) { "core link operation failed: $value" }
+        // 0 is Ok; 2 is InvalidTransition (ignorable for redundant observations per A-011)
+        check(value == 0 || value == 2) { "core link operation failed: $value" }
     }
 
     companion object {
@@ -38,6 +39,7 @@ internal class NativeCoreLink private constructor(private val handle: Long) : Au
         private external fun nativeHandshakeReady(
             handle: Long,
             nowMs: Long,
+            hasSession: Boolean,
             sessionId: Long,
         ): Int
     }

@@ -161,5 +161,24 @@ documented `apps/mac-tauri` planning scaffold in root `README.md` (`A-020`).
 **Left open:** A-004/A-011 Android state machine transitions, A-006 native Keychain
 RSA generation without openssl CLI, A-012 two-sided ConnectionArbiter.
 
+## S-011 — 2026-11-25 — Phase 4 Android session continuity & dial arbitration
+
+**Asked:** next continue.
+
+**Produced:** mapped `has_session` through `idroid_core_jni.cpp` and `NativeCoreLink.kt`
+to Rust FFI `idroid_link_handshake_ready` (`A-004`); reused `NativeCoreLink` instance
+across reconnects and throughout the `ContinuityService` lifetime; updated `requireResult`
+to treat `InvalidTransition` (2) as non-fatal idempotent observation (`A-011`);
+added outbound dial gating on Android and duplicate discovery suppression (within 500ms)
+on macOS to prevent dial thrashing and race conditions (`A-012`).
+
+**Findings:** none new.
+
+**Audit:** A-004, A-011, A-012 fixed. Verified: `make test` (81 tests pass),
+`apps/mac-native/build-mac.sh` (signed bundle), and `build-android.sh` (:app:assembleDebug).
+
+**Left open:** A-006 native Keychain RSA generation in Swift, A-019 abstraction pruning.
+
+
 
 
