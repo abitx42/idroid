@@ -47,7 +47,7 @@ do not silently edit the old one.
 | Fact | Value |
 | --- | --- |
 | Workspace crates | `core` (portable, `#![forbid(unsafe_code)]`), `core-ffi` (C ABI + JNI shim) |
-| Baseline check | `cargo test --locked --workspace --all-targets` → 51 tests |
+| Baseline check | `cargo test --locked --workspace --all-targets` → 55 tests |
 | Lint | `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --check` |
 | Platform slices | `apps/mac-native` (Swift menu-bar), `experiments/android-macos-vertical-slice` (Kotlin) |
 | Docs | `docs/ARCHITECTURE.md`, `docs/CONTROL-PLANE-V1.md`, `docs/CALLS-CONTINUITY.md`, `docs/SEAMLESS-CONNECTIVITY.md`, `docs/PLATFORM-WORKAROUNDS.md` |
