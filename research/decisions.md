@@ -12,7 +12,7 @@ Append-only. A decision is either `accepted` (settled for now) or `proposed`
 | D-005 | proposed | iPhone support = HFP calls + screen viewing, never control. | `F-003`–`F-005`, `F-004` is absolute. | Marketing must not promise iPhone remote control. |
 | D-006 | proposed | macOS ships as a Developer ID, notarized, direct-distribution app; a reduced App Store edition may cover phone-controlled direction only. | `F-034`, `F-035`. | Two builds to maintain, one core; the MAS edition cannot inject input into the Mac. |
 | D-007 | proposed | Replace the ad-hoc discovery/transport ladder with: mDNS on LAN, BLE presence, `iroh` for cross-network. | `F-026`, `F-022`: AWDL is closed, `iroh` is Rust-native and key-addressed. | New dependency decision required; must not contaminate `core/`'s dependency-free rule. |
-| D-008 | proposed | Wire the core codec onto the real connection before adding any protocol feature. | `A-001`, `A-002`, `A-005`. | Blocks new features until the identity model is unified. |
+| D-008 | accepted | Wire the core codec onto the real connection before adding any protocol feature. | `A-001`, `A-002`, `A-005`. | Blocks new features until the identity model is unified. |
 
 ## How to use this file
 

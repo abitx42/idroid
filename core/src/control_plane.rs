@@ -1907,3 +1907,216 @@ fn ensure_feature(expected: Feature, received: Feature) -> Result<(), MediaSessi
         Err(MediaSessionError::FeatureMismatch { expected, received })
     }
 }
+
+// Stable binary tags for the V2 control-plane wire format. New variants must
+// append a new tag; existing tags are never reused.
+impl PeerRole {
+    pub const fn wire_value(self) -> u8 {
+        match self {
+            Self::Android => 1,
+            Self::Mac => 2,
+        }
+    }
+
+    pub const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::Android),
+            2 => Some(Self::Mac),
+            _ => None,
+        }
+    }
+}
+
+impl Feature {
+    pub const fn wire_value(self) -> u8 {
+        match self {
+            Self::Video => 1,
+            Self::Input => 2,
+        }
+    }
+
+    pub const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::Video),
+            2 => Some(Self::Input),
+            _ => None,
+        }
+    }
+}
+
+impl Backend {
+    pub const fn wire_value(self) -> u8 {
+        match self {
+            Self::Helper => 1,
+            Self::MediaProjection => 2,
+            Self::Accessibility => 3,
+        }
+    }
+
+    pub const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::Helper),
+            2 => Some(Self::MediaProjection),
+            3 => Some(Self::Accessibility),
+            _ => None,
+        }
+    }
+}
+
+impl CapabilityStatus {
+    pub const fn wire_value(self) -> u8 {
+        match self {
+            Self::Available => 1,
+            Self::NeedsUserAction => 2,
+            Self::Unavailable => 3,
+        }
+    }
+
+    pub const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::Available),
+            2 => Some(Self::NeedsUserAction),
+            3 => Some(Self::Unavailable),
+            _ => None,
+        }
+    }
+}
+
+impl CapabilityReason {
+    pub const fn wire_value(self) -> u8 {
+        match self {
+            Self::MediaProjectionConsentRequired => 1,
+            Self::AccessibilityPermissionRequired => 2,
+            Self::WirelessDebuggingRequired => 3,
+            Self::HelperStopped => 4,
+            Self::HelperNotInstalled => 5,
+            Self::PermissionDenied => 6,
+            Self::UnsupportedDevice => 7,
+            Self::BackgroundRestricted => 8,
+            Self::Unknown => 9,
+        }
+    }
+
+    pub const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::MediaProjectionConsentRequired),
+            2 => Some(Self::AccessibilityPermissionRequired),
+            3 => Some(Self::WirelessDebuggingRequired),
+            4 => Some(Self::HelperStopped),
+            5 => Some(Self::HelperNotInstalled),
+            6 => Some(Self::PermissionDenied),
+            7 => Some(Self::UnsupportedDevice),
+            8 => Some(Self::BackgroundRestricted),
+            9 => Some(Self::Unknown),
+            _ => None,
+        }
+    }
+}
+
+impl UserAction {
+    pub const fn wire_value(self) -> u8 {
+        match self {
+            Self::GrantMediaProjection => 1,
+            Self::GrantAccessibility => 2,
+            Self::EnableWirelessDebugging => 3,
+            Self::StartHelper => 4,
+            Self::InstallHelper => 5,
+            Self::UnlockDevice => 6,
+            Self::PairDevice => 7,
+        }
+    }
+
+    pub const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::GrantMediaProjection),
+            2 => Some(Self::GrantAccessibility),
+            3 => Some(Self::EnableWirelessDebugging),
+            4 => Some(Self::StartHelper),
+            5 => Some(Self::InstallHelper),
+            6 => Some(Self::UnlockDevice),
+            7 => Some(Self::PairDevice),
+            _ => None,
+        }
+    }
+}
+
+impl LinkState {
+    pub const fn wire_value(self) -> u8 {
+        match self {
+            Self::Searching => 1,
+            Self::Connecting => 2,
+            Self::Handshaking => 3,
+            Self::Ready => 4,
+            Self::Degraded => 5,
+            Self::Lost => 6,
+        }
+    }
+
+    pub const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::Searching),
+            2 => Some(Self::Connecting),
+            3 => Some(Self::Handshaking),
+            4 => Some(Self::Ready),
+            5 => Some(Self::Degraded),
+            6 => Some(Self::Lost),
+            _ => None,
+        }
+    }
+}
+
+impl BackendChangeReason {
+    pub const fn wire_value(self) -> u8 {
+        match self {
+            Self::HelperLost => 1,
+            Self::HelperRecovered => 2,
+            Self::UserSelected => 3,
+            Self::PermissionGranted => 4,
+            Self::CapabilityChanged => 5,
+            Self::ThermalLimit => 6,
+        }
+    }
+
+    pub const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::HelperLost),
+            2 => Some(Self::HelperRecovered),
+            3 => Some(Self::UserSelected),
+            4 => Some(Self::PermissionGranted),
+            5 => Some(Self::CapabilityChanged),
+            6 => Some(Self::ThermalLimit),
+            _ => None,
+        }
+    }
+}
+
+impl ControlErrorCode {
+    pub const fn wire_value(self) -> u8 {
+        match self {
+            Self::VersionUnsupported => 1,
+            Self::IdentityMismatch => 2,
+            Self::NotPaired => 3,
+            Self::BackendUnavailable => 4,
+            Self::UserActionRequired => 5,
+            Self::PermissionDenied => 6,
+            Self::HelperLost => 7,
+            Self::Timeout => 8,
+            Self::Internal => 9,
+        }
+    }
+
+    pub const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::VersionUnsupported),
+            2 => Some(Self::IdentityMismatch),
+            3 => Some(Self::NotPaired),
+            4 => Some(Self::BackendUnavailable),
+            5 => Some(Self::UserActionRequired),
+            6 => Some(Self::PermissionDenied),
+            7 => Some(Self::HelperLost),
+            8 => Some(Self::Timeout),
+            9 => Some(Self::Internal),
+            _ => None,
+        }
+    }
+}

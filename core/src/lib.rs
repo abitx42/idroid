@@ -3,6 +3,7 @@
 pub mod clock;
 pub mod connections;
 pub mod control_plane;
+mod control_wire;
 pub mod device;
 pub mod device_state;
 pub mod discovery;

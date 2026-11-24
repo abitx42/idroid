@@ -1,5 +1,6 @@
 use std::fmt;
 
+use crate::control_plane::{ContractError, ControlMessage, ControlMessageKind};
 use crate::ids::{DeviceId, SessionId};
 use crate::session::{DisconnectReason, TerminationReason};
 
@@ -15,14 +16,18 @@ pub const MAX_ERROR_MESSAGE_SIZE: usize = 1_024;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ProtocolVersion {
+    /// Legacy lifecycle/data frames. Kept for existing adapters.
     #[default]
     V1,
+    /// Control-plane frames. Identity is a 32-byte public-key fingerprint.
+    V2,
 }
 
 impl ProtocolVersion {
     pub const fn wire_value(self) -> u8 {
         match self {
             Self::V1 => 1,
+            Self::V2 => 2,
         }
     }
 
@@ -33,6 +38,7 @@ impl ProtocolVersion {
     pub fn from_wire(value: u8) -> Result<Self, ProtocolError> {
         match value {
             1 => Ok(Self::V1),
+            2 => Ok(Self::V2),
             other => Err(ProtocolError::UnsupportedVersion(other)),
         }
     }
@@ -63,6 +69,18 @@ pub enum MessageKind {
     PermissionChange,
     CaptureState,
     Error,
+    // V2 control-plane kinds. Tags 17+ are intentionally disjoint from the
+    // legacy V1 kinds above.
+    ControlHello,
+    ControlHelloAck,
+    Capabilities,
+    CapabilitiesUpdate,
+    SessionRequest,
+    SessionResult,
+    ControlHeartbeat,
+    BackendChanged,
+    ControlError,
+    Bye,
 }
 
 impl MessageKind {
@@ -84,6 +102,16 @@ impl MessageKind {
             Self::PermissionChange => 14,
             Self::CaptureState => 15,
             Self::Error => 16,
+            Self::ControlHello => 17,
+            Self::ControlHelloAck => 18,
+            Self::Capabilities => 19,
+            Self::CapabilitiesUpdate => 20,
+            Self::SessionRequest => 21,
+            Self::SessionResult => 22,
+            Self::ControlHeartbeat => 23,
+            Self::BackendChanged => 24,
+            Self::ControlError => 25,
+            Self::Bye => 26,
         }
     }
 
@@ -109,6 +137,16 @@ impl MessageKind {
             14 => Ok(Self::PermissionChange),
             15 => Ok(Self::CaptureState),
             16 => Ok(Self::Error),
+            17 => Ok(Self::ControlHello),
+            18 => Ok(Self::ControlHelloAck),
+            19 => Ok(Self::Capabilities),
+            20 => Ok(Self::CapabilitiesUpdate),
+            21 => Ok(Self::SessionRequest),
+            22 => Ok(Self::SessionResult),
+            23 => Ok(Self::ControlHeartbeat),
+            24 => Ok(Self::BackendChanged),
+            25 => Ok(Self::ControlError),
+            26 => Ok(Self::Bye),
             other => Err(ProtocolError::UnknownMessageType(other)),
         }
     }
@@ -424,6 +462,29 @@ pub enum MessageBody {
         code: ErrorCode,
         message: String,
     },
+    /// V2 control-plane message. The inner message owns validation.
+    Control(ControlMessage),
+}
+
+impl From<ControlMessage> for MessageBody {
+    fn from(message: ControlMessage) -> Self {
+        Self::Control(message)
+    }
+}
+
+const fn control_message_kind(kind: ControlMessageKind) -> MessageKind {
+    match kind {
+        ControlMessageKind::Hello => MessageKind::ControlHello,
+        ControlMessageKind::HelloAck => MessageKind::ControlHelloAck,
+        ControlMessageKind::Capabilities => MessageKind::Capabilities,
+        ControlMessageKind::CapabilitiesUpdate => MessageKind::CapabilitiesUpdate,
+        ControlMessageKind::SessionRequest => MessageKind::SessionRequest,
+        ControlMessageKind::SessionResult => MessageKind::SessionResult,
+        ControlMessageKind::Heartbeat => MessageKind::ControlHeartbeat,
+        ControlMessageKind::BackendChanged => MessageKind::BackendChanged,
+        ControlMessageKind::Error => MessageKind::ControlError,
+        ControlMessageKind::Bye => MessageKind::Bye,
+    }
 }
 
 impl MessageBody {
@@ -445,6 +506,7 @@ impl MessageBody {
             Self::PermissionChange { .. } => MessageKind::PermissionChange,
             Self::CaptureState { .. } => MessageKind::CaptureState,
             Self::Error { .. } => MessageKind::Error,
+            Self::Control(message) => control_message_kind(message.kind()),
         }
     }
 
@@ -515,6 +577,7 @@ impl MessageBody {
                 }
                 validate_text(message, "message", MAX_ERROR_MESSAGE_SIZE)
             }
+            Self::Control(message) => message.validate().map_err(map_contract_error),
         }
     }
 
@@ -1049,7 +1112,13 @@ pub struct ProtocolMessage {
 
 impl ProtocolMessage {
     pub fn new(body: impl Into<MessageBody>) -> Result<Self, ProtocolError> {
-        Self::with_version(ProtocolVersion::V1, body)
+        let body = body.into();
+        let version = if matches!(body, MessageBody::Control(_)) {
+            ProtocolVersion::V2
+        } else {
+            ProtocolVersion::V1
+        };
+        Self::with_version(version, body)
     }
 
     pub fn with_version(
@@ -1077,7 +1146,15 @@ impl ProtocolMessage {
     }
 
     pub fn validate(&self) -> Result<(), ProtocolError> {
-        self.body.validate()
+        match (self.version, &self.body) {
+            (ProtocolVersion::V1, MessageBody::Control(_)) => {
+                Err(ProtocolError::InvalidField("version"))
+            }
+            (ProtocolVersion::V2, body) if !matches!(body, MessageBody::Control(_)) => {
+                Err(ProtocolError::InvalidField("version"))
+            }
+            _ => self.body.validate(),
+        }
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, ProtocolError> {
@@ -1175,6 +1252,9 @@ impl ProtocolMessage {
                 payload.push(code.wire_value());
                 put_u16(&mut payload, message.len());
                 payload.extend_from_slice(message.as_bytes());
+            }
+            MessageBody::Control(message) => {
+                payload = crate::control_wire::encode(message)?;
             }
         }
 
@@ -1399,6 +1479,28 @@ impl fmt::Display for ProtocolError {
 }
 
 impl std::error::Error for ProtocolError {}
+
+pub(crate) fn map_contract_error(error: ContractError) -> ProtocolError {
+    match error {
+        ContractError::InvalidField(field) => ProtocolError::InvalidField(field),
+        ContractError::FieldTooLarge {
+            field,
+            actual,
+            maximum,
+        } => ProtocolError::FieldTooLarge {
+            field,
+            actual,
+            maximum,
+        },
+        ContractError::IncompatibleBackend { .. } => {
+            ProtocolError::InvalidField("incompatible_backend")
+        }
+        ContractError::DuplicateBackend(_) => ProtocolError::InvalidField("backends"),
+        ContractError::DuplicateFeature(_) | ContractError::MissingFeature(_) => {
+            ProtocolError::InvalidField("features")
+        }
+    }
+}
 
 fn require_id(valid: bool, field: &'static str) -> Result<(), ProtocolError> {
     if valid {
@@ -1707,6 +1809,16 @@ fn decode_body(kind: MessageKind, payload: &[u8]) -> Result<MessageBody, Protoco
                 message,
             })
         }
+        MessageKind::ControlHello
+        | MessageKind::ControlHelloAck
+        | MessageKind::Capabilities
+        | MessageKind::CapabilitiesUpdate
+        | MessageKind::SessionRequest
+        | MessageKind::SessionResult
+        | MessageKind::ControlHeartbeat
+        | MessageKind::BackendChanged
+        | MessageKind::ControlError
+        | MessageKind::Bye => crate::control_wire::decode(kind, payload).map(MessageBody::Control),
     }
 }
 
@@ -1719,8 +1831,42 @@ mod tests {
         let decoded =
             ProtocolMessage::decode(&message.encode().expect("encodes")).expect("decodes");
         assert_eq!(decoded, message);
-        assert_eq!(decoded.version(), ProtocolVersion::V1);
+        assert_eq!(decoded.version(), message.version());
         assert_eq!(decoded.kind(), decoded.body().kind());
+    }
+
+    #[test]
+    fn control_messages_frame_as_v2() {
+        use crate::control_plane::DeviceFingerprint;
+        use crate::control_plane::{ControlMessage, Hello, PeerRole, VersionRange};
+
+        let hello = Hello::new(
+            VersionRange { min: 1, max: 2 },
+            DeviceFingerprint::from_array([3; 32]),
+            PeerRole::Mac,
+            "0.1.0",
+            None,
+        )
+        .expect("valid hello");
+        let message = ProtocolMessage::new(ControlMessage::Hello(hello)).expect("valid message");
+        assert_eq!(message.version(), ProtocolVersion::V2);
+
+        let frame = message.encode().expect("encodes");
+        assert_eq!(frame[4], 2);
+        assert_eq!(frame[5], MessageKind::ControlHello.wire_value());
+
+        let decoded = ProtocolMessage::decode(&frame).expect("decodes");
+        assert_eq!(decoded, message);
+        assert_eq!(decoded.kind(), MessageKind::ControlHello);
+    }
+
+    #[test]
+    fn control_body_requires_v2() {
+        use crate::control_plane::{Bye, ControlMessage};
+
+        let body = MessageBody::Control(ControlMessage::Bye(Bye::normal()));
+        assert!(ProtocolMessage::with_version(ProtocolVersion::V1, body.clone()).is_err());
+        assert!(ProtocolMessage::with_version(ProtocolVersion::V2, body).is_ok());
     }
 
     #[test]

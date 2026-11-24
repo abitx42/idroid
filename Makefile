@@ -12,11 +12,20 @@ ifneq ($(wildcard $(RUSTUP_BIN)/cargo),)
 CARGO ?= $(RUSTUP_BIN)/cargo
 export RUSTC := $(RUSTUP_BIN)/rustc
 export RUSTDOC := $(RUSTUP_BIN)/rustdoc
+# `cargo clippy` resolves `clippy-driver` from PATH, so a Homebrew clippy on
+# PATH would lint with a different compiler than the pinned one. See A-021.
+export PATH := $(RUSTUP_BIN):$(PATH)
 else
 CARGO ?= cargo
 endif
 
-.PHONY: test lint check-clock-source check-toolchain clean test-mac test-offline research-check
+.PHONY: test lint check-clock-source check-headers check-toolchain clean test-mac test-offline research-check
+
+check-headers:
+	@if ! diff -q core-ffi/include/idroid_core_ffi.h apps/mac-native/Sources/IdroidCoreFFI/include/idroid_core_ffi.h >/dev/null; then \
+		printf '%s\n' 'FFI headers differ: core-ffi/include/idroid_core_ffi.h and apps/mac-native/Sources/IdroidCoreFFI/include/idroid_core_ffi.h must stay identical.' >&2; \
+		exit 1; \
+	fi
 
 check-toolchain:
 	@actual=$$($(CARGO) --version | awk '{print $$2}'); \
@@ -35,7 +44,12 @@ check-clock-source:
 		exit 1; \
 	fi
 
-lint: check-toolchain check-clock-source
+lint: check-toolchain check-clock-source check-headers
+	@expected="$(RUSTUP_BIN)/clippy-driver"; actual=$$(command -v clippy-driver); \
+	if [ "$$actual" != "$$expected" ]; then \
+		printf '%s\n' "clippy-driver resolves to $$actual, not $$expected (A-021)." >&2; \
+		exit 1; \
+	fi
 	$(CARGO) fmt --all -- --check
 	$(CARGO) clippy $(CARGO_WORKSPACE) $(CARGO_LOCKED) -- -D warnings
 	python3 scripts/research_check.py

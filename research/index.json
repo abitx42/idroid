@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-11-24",
+  "updated": "2026-11-25",
   "topics": {
     "calls": {
       "summary": "Cellular call audio on the Mac. HFP is the only real path; app-level capture is impossible.",
@@ -54,5 +54,5 @@
     }
   },
   "decisions": ["D-001", "D-002", "D-003", "D-004", "D-005", "D-006", "D-007", "D-008"],
-  "sessions": ["S-001", "S-002", "S-003", "S-004", "S-005", "S-006", "S-007"]
+  "sessions": ["S-001", "S-002", "S-003", "S-004", "S-005", "S-006", "S-007", "S-008"]
 }

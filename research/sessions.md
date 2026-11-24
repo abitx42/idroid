@@ -99,3 +99,26 @@ a hidden Trail of Bits Rust security review).
 
 **Left open:** wire-codec decision (D-008), identity unification (A-002), and
 golden cross-language vectors (A-005).
+
+## S-008 — 2026-11-25 — Phase 1 wire codec unification and dual licensing
+
+**Asked:** check and execute next phase.
+
+**Produced:** `ProtocolVersion::V2` and 10 control-plane message kinds framed in
+`core/src/protocol.rs`; binary wire encoder/decoder in `core/src/control_wire.rs`;
+C-ABI FFI codec in `core-ffi/src/codec.rs`; synchronized FFI headers in
+`apps/mac-native/`; cross-language golden vectors in `tests/protocol/control-plane-v2.txt`
+(`golden_vectors.rs`); decode safety & fuzzing tests in `core/tests/decode_safety.rs`;
+dual licensing (`LICENSE-APACHE`, `LICENSE-MIT`) and README update; Makefile
+`check-headers`.
+
+**Findings:** none new.
+
+**Decisions:** D-008 accepted.
+
+**Audit:** A-001, A-002, A-005, A-016, A-018 fixed. Baseline now 80 tests.
+
+**Left open:** Phase 2 platform slice integration (`apps/mac-native` and Android
+vertical slice wiring up FFI codec), Android supervisor lifecycle (A-004, A-008,
+A-010), and macOS app bundle (A-007).
+

@@ -1,10 +1,15 @@
 //! Small C ABI for the real platform adapters.
 //!
-//! The ABI deliberately exposes only the link state machine. Discovery,
+//! The ABI exposes the link state machine and the binary codec. Discovery,
 //! certificate verification, sockets, and UI stay in platform code; both
-//! adapters can nevertheless drive the exact `idroid-core` implementation.
+//! adapters can nevertheless drive the exact `idroid-core` implementation and
+//! exchange frames it produced.
 
 #![allow(unsafe_code)]
+
+mod codec;
+
+pub use codec::*;
 
 use idroid_core::{LinkMachine, LinkState, SessionId, Timestamp};
 

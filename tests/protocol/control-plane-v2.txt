@@ -1,0 +1,21 @@
+# iDroid protocol golden vectors (frame format 1)
+#
+# Every line is "<name> <lowercase hex frame>". A frame is:
+#   magic "IDR0" | protocol version u8 | message kind u8 | payload length u32 LE | payload
+#
+# These bytes are the cross-language contract. Rust, Kotlin, and Swift must
+# decode them identically and must produce identical bytes when encoding the
+# same message. Protocol version 1 carries the legacy lifecycle/data frames;
+# version 2 carries the control-plane frames whose identity is a 32-byte
+# public-key fingerprint.
+#
+# Do not edit a vector to make an implementation pass. Add a new vector with a
+# new name and record why the old one is retired.
+
+hello.android.v2 4944523002112d00000001000200000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f010500302e312e3000
+hello.mac.v2 4944523002113500000001000200ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff020500312e322e33010807060504030201
+hello_ack.v2 494452300212020000000200
+bye.normal.v2 49445230021a03000000000000
+bye.timeout.v2 49445230021a0400000001080100
+data.v1 4944523001060b0000002a00000000000000010203
+heartbeat.v1 4944523001021000000002000000000000000300000000000000
