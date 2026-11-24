@@ -9,6 +9,11 @@ struct MacIdentity {
     let certificate: SecCertificate
     let fingerprint: String
 
+    var fingerprintBytes: Data {
+        let bytes = SecCertificateCopyData(certificate) as Data
+        return Data(SHA256.hash(data: bytes))
+    }
+
     init() throws {
         if let identity = Self.loadIdentity() {
             self = try Self.make(identity: identity)

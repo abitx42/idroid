@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
 import org.json.JSONObject
+import java.io.BufferedInputStream
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.InputStreamReader
@@ -138,23 +139,81 @@ class ContinuityService : Service() {
                     coreLink?.connectionFailed(SystemClock.elapsedRealtime())
                     return
                 }
-                val reader = BufferedReader(InputStreamReader(ssl.inputStream, Charsets.UTF_8))
-                val line = reader.readLine() ?: run {
-                    coreLink?.connectionFailed(SystemClock.elapsedRealtime())
-                    return
+                val input = BufferedInputStream(ssl.inputStream)
+                input.mark(10)
+                val header = ByteArray(10)
+                val readHeader = input.read(header)
+                input.reset()
+
+                val isBinaryHello = readHeader >= 10 &&
+                    header[0] == 'I'.code.toByte() &&
+                    header[1] == 'D'.code.toByte() &&
+                    header[2] == 'R'.code.toByte() &&
+                    header[3] == '0'.code.toByte() &&
+                    header[4] == 2.toByte() &&
+                    header[5] == 17.toByte()
+
+                if (isBinaryHello) {
+                    val fullHeader = ByteArray(10)
+                    var readHeaderBytes: Int = 0
+                    while (readHeaderBytes < 10) {
+                        val count = input.read(fullHeader, readHeaderBytes, 10 - readHeaderBytes)
+                        if (count < 0) break
+                        readHeaderBytes += count
+                    }
+                    val payloadLen = (fullHeader[6].toInt() and 0xFF) or
+                        ((fullHeader[7].toInt() and 0xFF) shl 8) or
+                        ((fullHeader[8].toInt() and 0xFF) shl 16) or
+                        ((fullHeader[9].toInt() and 0xFF) shl 24)
+                    val payload = ByteArray(payloadLen)
+                    var readPayloadBytes: Int = 0
+                    while (readPayloadBytes < payloadLen) {
+                        val count = input.read(payload, readPayloadBytes, payloadLen - readPayloadBytes)
+                        if (count < 0) break
+                        readPayloadBytes += count
+                    }
+                    if (payloadLen < 36) {
+                        coreLink?.connectionFailed(SystemClock.elapsedRealtime())
+                        return
+                    }
+                    val observed = payload.sliceArray(4 until 36).joinToString("") { "%02x".format(it) }
+                    if (!observed.equals(expected, ignoreCase = true)) {
+                        coreLink?.connectionFailed(SystemClock.elapsedRealtime())
+                        return
+                    }
+                    coreLink?.transportConnected(SystemClock.elapsedRealtime())
+                    coreLink?.handshakeReady(SystemClock.elapsedRealtime(), hasActiveSession, persistentSessionId)
+                    hasActiveSession = true
+                    // Send binary HelloAck frame (golden vector: 494452300212020000000200) followed by newline for backward compatibility
+                    val helloAck = byteArrayOf(
+                        0x49, 0x44, 0x52, 0x30, // IDR0
+                        0x02, // version = 2
+                        0x12, // kind = 18 (ControlHelloAck)
+                        0x02, 0x00, 0x00, 0x00, // length = 2
+                        0x02, 0x00 // selected_version = 2
+                    )
+                    ssl.outputStream.write(helloAck)
+                    ssl.outputStream.write("OK ready\n".toByteArray(Charsets.UTF_8))
+                    ssl.outputStream.flush()
+                } else {
+                    val reader = BufferedReader(InputStreamReader(input, Charsets.UTF_8))
+                    val line = reader.readLine() ?: run {
+                        coreLink?.connectionFailed(SystemClock.elapsedRealtime())
+                        return
+                    }
+                    val request = JSONObject(line)
+                    if (request.optString("type") != "hello" ||
+                        request.optString("fingerprint") != expected) {
+                        coreLink?.connectionFailed(SystemClock.elapsedRealtime())
+                        return
+                    }
+                    coreLink?.transportConnected(SystemClock.elapsedRealtime())
+                    coreLink?.handshakeReady(SystemClock.elapsedRealtime(), hasActiveSession, persistentSessionId)
+                    hasActiveSession = true
+                    val writer = BufferedWriter(OutputStreamWriter(ssl.outputStream, Charsets.UTF_8))
+                    writer.write("OK ready\n")
+                    writer.flush()
                 }
-                val request = JSONObject(line)
-                if (request.optString("type") != "hello" ||
-                    request.optString("fingerprint") != expected) {
-                    coreLink?.connectionFailed(SystemClock.elapsedRealtime())
-                    return
-                }
-                coreLink?.transportConnected(SystemClock.elapsedRealtime())
-                coreLink?.handshakeReady(SystemClock.elapsedRealtime(), hasActiveSession, persistentSessionId)
-                hasActiveSession = true
-                val writer = BufferedWriter(OutputStreamWriter(ssl.outputStream, Charsets.UTF_8))
-                writer.write("OK ready\n")
-                writer.flush()
             } catch (_: Throwable) {
                 coreLink?.connectionFailed(SystemClock.elapsedRealtime())
             }

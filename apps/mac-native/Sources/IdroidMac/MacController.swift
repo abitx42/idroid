@@ -268,9 +268,13 @@ final class MacController: NSObject {
             connection.cancel()
             return
         }
-        let message = try? JSONEncoder().encode(
+        let message = CoreCodec.encodeHello(
+            fingerprint: identity.fingerprintBytes,
+            role: 1,
+            lastSessionID: sessionID
+        ) ?? (try? JSONEncoder().encode(
             ReconnectRequest(type: "hello", fingerprint: identity.fingerprint)
-        )
+        ))
         send(message, on: connection)
         readMessage(on: connection, initiatedBy: identity.fingerprint)
     }
@@ -294,6 +298,29 @@ final class MacController: NSObject {
     }
 
     private func handleMessage(_ data: Data, on connection: NWConnection, initiatedBy: String?) {
+        if CoreCodec.validate(frame: data) {
+            let kind = CoreCodec.frameKind(frame: data)
+            if kind == 17 /* Hello */ {
+                if let hello = CoreCodec.decodeHello(frame: data) {
+                    handleReconnect(
+                        ReconnectRequest(type: "hello", fingerprint: hello.fingerprintHex),
+                        on: connection,
+                        initiatedBy: initiatedBy
+                    )
+                    if let ack = CoreCodec.encodeHelloAck() {
+                        send(ack, on: connection)
+                    }
+                    return
+                }
+            } else if kind == 18 /* HelloAck */ {
+                handleOutgoingReady(on: connection)
+                return
+            } else if kind == 26 /* Bye */ {
+                connection.cancel()
+                return
+            }
+        }
+
         guard let line = String(data: data, encoding: .utf8),
               let first = line.split(separator: "\n", maxSplits: 1).first,
               let object = first.data(using: .utf8) else {

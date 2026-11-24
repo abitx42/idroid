@@ -191,6 +191,19 @@ on macOS to prevent dial thrashing and race conditions (`A-012`).
 
 **Left open:** A-019 abstraction pruning in `core/src/discovery.rs`, `pairing.rs`, `connections.rs`.
 
+## S-013 — 2026-11-25 — Phase 6 Platform wire codec integration (Swift & Kotlin)
+
+**Asked:** next continue.
+
+**Produced:** integrated C-ABI frame codec in `CoreLink.swift` with safe Swift enum `CoreCodec` supporting `encodeHello`, `decodeHello`, `encodeHelloAck`, `decodeHelloAck`, `encodeBye`, `decodeBye`, and validation; updated `MacController.swift` to dial with binary `ProtocolVersion::V2` `Hello` frame carrying 32-byte public key fingerprint data and arbitrate responses (`HelloAck`); updated Android `ContinuityService.kt` to inspect incoming frames for `IDR0` magic and handle binary `Hello` (verifying peer fingerprint from payload) and reply with `hello_ack.v2` golden frame, while preserving JSON fallback for pairing.
+
+**Findings:** none new.
+
+**Audit:** verified binary control frame exchange compatibility. Verified: `make test` (81 tests pass), `apps/mac-native/build-mac.sh` (signed bundle), and `build-android.sh` (:app:assembleDebug).
+
+**Left open:** A-019 abstraction pruning in `core/src/discovery.rs`, `pairing.rs`, `connections.rs`.
+
+
 
 
 
