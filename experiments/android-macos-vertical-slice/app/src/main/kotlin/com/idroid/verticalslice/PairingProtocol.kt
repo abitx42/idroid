@@ -103,8 +103,11 @@ internal object PairingTransport {
                     .put("fingerprint", AndroidIdentityStore.fingerprint(AndroidIdentityStore.certificateDer()))
                 val ready = exchange(ssl, request).startsWith("OK ready")
                 if (ready) {
+                    val sessionId = context.getSharedPreferences("idroid_service", Context.MODE_PRIVATE)
+                        .getLong("session_id", 0L)
+                        .takeIf { it > 0 } ?: SystemClock.elapsedRealtime()
                     link?.transportConnected(SystemClock.elapsedRealtime())
-                    link?.handshakeReady(SystemClock.elapsedRealtime(), SystemClock.elapsedRealtime())
+                    link?.handshakeReady(SystemClock.elapsedRealtime(), sessionId)
                 }
                 return ready
             } catch (error: Throwable) {

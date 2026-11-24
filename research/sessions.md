@@ -122,3 +122,25 @@ dual licensing (`LICENSE-APACHE`, `LICENSE-MIT`) and README update; Makefile
 vertical slice wiring up FFI codec), Android supervisor lifecycle (A-004, A-008,
 A-010), and macOS app bundle (A-007).
 
+## S-009 — 2026-11-25 — Phase 2 platform slice bundle & supervisor hardening
+
+**Asked:** execute next phase across platforms.
+
+**Produced:** macOS app bundle packaging (`iDroid.app`), `Info.plist` declaring
+local network, Bonjour, and Bluetooth descriptions, `entitlements.plist`, and
+ad-hoc codesigning in `build-mac.sh` (`A-007`); constant-time pairing token
+comparison and 6-digit SAS derivation in `MacController.swift` (`A-013`);
+Android `ContinuityService` supervisor with resilient accept loop, atomic
+generation counter, `ConnectivityManager.NetworkCallback` network monitoring,
+and persistent session identifier (`A-008`, `A-010`).
+
+**Findings:** none new.
+
+**Audit:** A-007, A-008, A-010, A-013 fixed. Both platform builds verified:
+`build-mac.sh` produces signed `iDroid.app` bundle; `build-android.sh` produces
+`app-debug.apk`.
+
+**Left open:** A-004 / A-011 state machine refinement on Android, A-006 native
+Keychain generation in Swift, A-009 NSD resolution serialization.
+
+

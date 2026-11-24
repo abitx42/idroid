@@ -321,7 +321,7 @@ final class MacController: NSObject {
             connection.cancel()
             return
         }
-        guard request.token == payload.oneTimeToken else {
+        guard Self.constantTimeEquals(request.token, payload.oneTimeToken) else {
             let now = Date()
             if let rejected = rejectedPairingTokens[request.token], now < rejected.retryAt {
                 record("PairingTokenLockedOut")
@@ -365,8 +365,13 @@ final class MacController: NSObject {
             try trustStore.save(peer)
             rejectedPairingTokens.removeValue(forKey: request.token)
             pairPayload = nil
-            record("PairingTokenConsumed")
-            send("OK paired\n", on: connection)
+            let sas = Self.deriveSAS(
+                macFingerprint: identity.fingerprint,
+                phoneFingerprint: peer.fingerprint,
+                token: payload.oneTimeToken
+            )
+            record("PairingConfirmedSAS:\(sas)")
+            send("OK paired sas=\(sas)\n", on: connection)
             admit(connection, peerFingerprint: peer.fingerprint, initiator: peer.fingerprint)
             listener?.cancel()
             listener = nil
@@ -510,6 +515,26 @@ final class MacController: NSObject {
         } else {
             try? Data(line.utf8).write(to: logURL, options: .atomic)
         }
+    }
+
+    private static func constantTimeEquals(_ a: String, _ b: String) -> Bool {
+        let aDigest = SHA256.hash(data: Data(a.utf8))
+        let bDigest = SHA256.hash(data: Data(b.utf8))
+        return aDigest == bDigest
+    }
+
+    private static func deriveSAS(macFingerprint: String, phoneFingerprint: String, token: String) -> String {
+        let sorted = [macFingerprint.lowercased(), phoneFingerprint.lowercased()].sorted().joined(separator: ":")
+        let material = "\(sorted):\(token)"
+        let digest = SHA256.hash(data: Data(material.utf8))
+        let val = digest.withUnsafeBytes { ptr -> UInt32 in
+            let b0 = UInt32(ptr[0])
+            let b1 = UInt32(ptr[1])
+            let b2 = UInt32(ptr[2])
+            let b3 = UInt32(ptr[3])
+            return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
+        }
+        return String(format: "%06d", val % 1_000_000)
     }
 
     private static func localIPv4Address() -> String {

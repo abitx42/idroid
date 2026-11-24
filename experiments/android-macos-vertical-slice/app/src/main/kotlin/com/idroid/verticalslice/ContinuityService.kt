@@ -4,8 +4,13 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
@@ -14,19 +19,29 @@ import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
-import java.net.ServerSocket
+import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLServerSocket
 
 class ContinuityService : Service() {
     private val executor = Executors.newCachedThreadPool()
-    private var server: SSLServerSocket? = null
-    private var discovery: NsdDiscovery? = null
-    private var coreLink: NativeCoreLink? = null
-    private val sessionId = SystemClock.elapsedRealtime()
+    private val generation = AtomicInteger(0)
+    @Volatile private var server: SSLServerSocket? = null
+    @Volatile private var discovery: NsdDiscovery? = null
+    @Volatile private var coreLink: NativeCoreLink? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var persistentSessionId: Long = 0L
+
+    override fun onCreate() {
+        super.onCreate()
+        persistentSessionId = loadOrMintSessionId()
+        coreLink = NativeCoreLink.create(SystemClock.elapsedRealtime())
+        registerNetworkCallback()
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         createChannel()
@@ -39,30 +54,49 @@ class ContinuityService : Service() {
         } else {
             startForeground(notificationId, notification())
         }
-        if (server == null) startTransport()
+        if (server == null || server?.isClosed == true) {
+            startTransport()
+        }
         return START_STICKY
     }
 
+    @Synchronized
     private fun startTransport() {
+        val currentGen = generation.incrementAndGet()
         executor.execute {
             try {
                 AndroidIdentityStore.ensureIdentity()
-                coreLink = NativeCoreLink.create(SystemClock.elapsedRealtime())
                 val context = tlsContext()
-                server = context.serverSocketFactory.createServerSocket(Signaling.defaultPort) as SSLServerSocket
-                server?.needClientAuth = true
-                discovery = NsdDiscovery(this)
-                discovery?.startAdvertising(Signaling.defaultPort)
-                discovery?.startBrowsing { host, port ->
+                runCatching { server?.close() }
+                val newServer = context.serverSocketFactory.createServerSocket(Signaling.defaultPort) as SSLServerSocket
+                newServer.needClientAuth = true
+                server = newServer
+
+                discovery?.stop()
+                val newDiscovery = NsdDiscovery(this)
+                discovery = newDiscovery
+                newDiscovery.startAdvertising(Signaling.defaultPort)
+                newDiscovery.startBrowsing { host, port ->
                     executor.execute { runCatching { PairingTransport.reconnect(this, host, port) } }
                 }
-                while (!server!!.isClosed) {
-                    val socket = server!!.accept() as javax.net.ssl.SSLSocket
-                    executor.execute { handle(socket) }
+
+                while (generation.get() == currentGen && !newServer.isClosed) {
+                    try {
+                        val socket = newServer.accept() as javax.net.ssl.SSLSocket
+                        executor.execute { handle(socket) }
+                    } catch (e: Exception) {
+                        if (generation.get() != currentGen || newServer.isClosed) break
+                        SystemClock.sleep(200)
+                    }
                 }
             } catch (_: Throwable) {
-                // The foreground service remains alive; the next start or
-                // network-change callback retries the listener.
+                // If the listener failed to bind or initialize, schedule a retry if this generation is active
+                if (generation.get() == currentGen) {
+                    SystemClock.sleep(1_000)
+                    if (generation.get() == currentGen) {
+                        startTransport()
+                    }
+                }
             }
         }
     }
@@ -70,26 +104,77 @@ class ContinuityService : Service() {
     private fun handle(socket: javax.net.ssl.SSLSocket) {
         socket.use { ssl ->
             try {
+                coreLink?.beginConnecting(SystemClock.elapsedRealtime())
                 ssl.startHandshake()
-                val peer = ssl.session.peerCertificates.firstOrNull() as? X509Certificate ?: return
-                val expected = AndroidIdentityStore.macFingerprint(this) ?: return
-                if (!AndroidIdentityStore.fingerprint(peer.encoded).equals(expected, true)) return
+                val peer = ssl.session.peerCertificates.firstOrNull() as? X509Certificate ?: run {
+                    coreLink?.connectionFailed(SystemClock.elapsedRealtime())
+                    return
+                }
+                val expected = AndroidIdentityStore.macFingerprint(this) ?: run {
+                    coreLink?.connectionFailed(SystemClock.elapsedRealtime())
+                    return
+                }
+                if (!AndroidIdentityStore.fingerprint(peer.encoded).equals(expected, true)) {
+                    coreLink?.connectionFailed(SystemClock.elapsedRealtime())
+                    return
+                }
                 val reader = BufferedReader(InputStreamReader(ssl.inputStream, Charsets.UTF_8))
-                val line = reader.readLine() ?: return
+                val line = reader.readLine() ?: run {
+                    coreLink?.connectionFailed(SystemClock.elapsedRealtime())
+                    return
+                }
                 val request = JSONObject(line)
                 if (request.optString("type") != "hello" ||
-                    request.optString("fingerprint") != expected) return
-                coreLink?.networkChanged(SystemClock.elapsedRealtime())
-                coreLink?.beginConnecting(SystemClock.elapsedRealtime())
+                    request.optString("fingerprint") != expected) {
+                    coreLink?.connectionFailed(SystemClock.elapsedRealtime())
+                    return
+                }
                 coreLink?.transportConnected(SystemClock.elapsedRealtime())
-                coreLink?.handshakeReady(SystemClock.elapsedRealtime(), sessionId)
+                coreLink?.handshakeReady(SystemClock.elapsedRealtime(), persistentSessionId)
                 val writer = BufferedWriter(OutputStreamWriter(ssl.outputStream, Charsets.UTF_8))
                 writer.write("OK ready\n")
                 writer.flush()
             } catch (_: Throwable) {
-                // Keep diagnostics closed-vocabulary and do not leak TLS data.
+                coreLink?.connectionFailed(SystemClock.elapsedRealtime())
             }
         }
+    }
+
+    private fun registerNetworkCallback() {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                coreLink?.networkChanged(SystemClock.elapsedRealtime())
+                startTransport()
+            }
+
+            override fun onLost(network: Network) {
+                coreLink?.networkChanged(SystemClock.elapsedRealtime())
+                startTransport()
+            }
+        }
+        networkCallback = callback
+        try {
+            if (Build.VERSION.SDK_INT >= 24) {
+                cm.registerDefaultNetworkCallback(callback)
+            } else {
+                val request = NetworkRequest.Builder()
+                    .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    .build()
+                cm.registerNetworkCallback(request, callback)
+            }
+        } catch (_: Throwable) {
+            // Best effort network monitoring
+        }
+    }
+
+    private fun loadOrMintSessionId(): Long {
+        val prefs = getSharedPreferences("idroid_service", Context.MODE_PRIVATE)
+        val existing = prefs.getLong("session_id", 0L)
+        if (existing > 0L) return existing
+        val minted = (SecureRandom().nextLong() and Long.MAX_VALUE).coerceAtLeast(1L)
+        prefs.edit().putLong("session_id", minted).apply()
+        return minted
     }
 
     private fun tlsContext(): SSLContext {
@@ -108,7 +193,7 @@ class ContinuityService : Service() {
 
     private fun createChannel() {
         if (Build.VERSION.SDK_INT < 26) return
-        getSystemService(NotificationManager::class.java).createNotificationChannel(
+        getSystemService(NotificationManager::class.java)?.createNotificationChannel(
             NotificationChannel(channel, "iDroid continuity", NotificationManager.IMPORTANCE_LOW),
         )
     }
@@ -130,7 +215,14 @@ class ContinuityService : Service() {
     }
 
     override fun onDestroy() {
+        generation.incrementAndGet()
+        networkCallback?.let { callback ->
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            runCatching { cm?.unregisterNetworkCallback(callback) }
+        }
+        networkCallback = null
         discovery?.stop()
+        discovery = null
         runCatching { server?.close() }
         server = null
         coreLink?.close()
