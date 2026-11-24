@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "updated": "2026-11-24",
+  "topics": {
+    "calls": {
+      "summary": "Cellular call audio on the Mac. HFP is the only real path; app-level capture is impossible.",
+      "findings": ["F-001", "F-002", "F-003", "F-006", "F-007", "F-008", "F-009", "F-010", "F-011", "F-039"],
+      "docs": ["docs/CALLS-CONTINUITY.md", "docs/PLATFORM-WORKAROUNDS.md#2-android-call-audio-stop-trying-to-capture-it-be-the-headset"]
+    },
+    "ios": {
+      "summary": "What an iPhone can and cannot do for a third party: calls over HFP, viewing over ReplayKit/SCK, never input injection.",
+      "findings": ["F-003", "F-004", "F-005", "F-036", "F-038", "F-042"],
+      "docs": ["docs/PLATFORM-WORKAROUNDS.md#1-iphone-calls-are-possible-control-is-not"]
+    },
+    "remote-input": {
+      "summary": "Bluetooth HID as a TCC-free input path, and its fidelity limits.",
+      "findings": ["F-012", "F-013", "F-014", "F-015", "F-016"],
+      "docs": ["docs/PLATFORM-WORKAROUNDS.md#3-the-accessibility-bypass-ble-hid"]
+    },
+    "wake": {
+      "summary": "Waking a sleeping Mac. BLE cannot; Sleep Proxy, WoL, or keeping it awake can.",
+      "findings": ["F-017", "F-018", "F-019", "F-020", "F-021", "F-040"],
+      "docs": ["docs/PLATFORM-WORKAROUNDS.md#4-wake-and-proximity-what-actually-helps"]
+    },
+    "transport": {
+      "summary": "QUIC versus WebRTC versus TCP/TLS for the durable channel; migration and 0-RTT rules.",
+      "findings": ["F-023", "F-024", "F-025"],
+      "docs": ["docs/SEAMLESS-CONNECTIVITY.md#6-session-and-transport"]
+    },
+    "discovery": {
+      "summary": "mDNS, NSD, AWDL, BLE presence, and the platform traps around each.",
+      "findings": ["F-022", "F-028", "F-029", "F-030"],
+      "docs": ["docs/SEAMLESS-CONNECTIVITY.md#5-discovery-done-properly"]
+    },
+    "cross-network": {
+      "summary": "Zero- and low-infrastructure connectivity: iroh, trystero, TURN free tiers, IPv6.",
+      "findings": ["F-026", "F-027"],
+      "docs": ["docs/PLATFORM-WORKAROUNDS.md#5-cross-network-with-no-infrastructure"]
+    },
+    "identity": {
+      "summary": "Device identity, pairing, and why Apple account identity cannot be forged.",
+      "findings": ["F-031", "F-032", "F-033", "F-038", "F-042"],
+      "docs": ["docs/PLATFORM-WORKAROUNDS.md#9-impersonation-can-android-be-an-iphone"]
+    },
+    "policy": {
+      "summary": "App Store, Play, TCC, and distribution constraints that shape the product.",
+      "findings": ["F-034", "F-035", "F-037", "F-041"],
+      "docs": ["docs/SEAMLESS-CONNECTIVITY.md#10-platform-policy-the-two-gates-that-decide-the-product"]
+    },
+    "code-audit": {
+      "summary": "Known defects in the Rust core and the platform slices.",
+      "audit": ["A-001", "A-002", "A-003", "A-004", "A-005", "A-006", "A-007", "A-008", "A-009", "A-010", "A-011", "A-012", "A-013", "A-014", "A-015", "A-016", "A-017", "A-018", "A-019", "A-020"],
+      "docs": ["research/audit.md"]
+    }
+  },
+  "decisions": ["D-001", "D-002", "D-003", "D-004", "D-005", "D-006", "D-007", "D-008"],
+  "sessions": ["S-001", "S-002", "S-003", "S-004", "S-005", "S-006"]
+}
