@@ -84,3 +84,18 @@ the advertised set.
 addressed (`LICENSE` pending an owner decision).
 
 **Left open:** license choice; Phase 1 (codec/identity unification) not started.
+
+## S-007 — 2026-11-24 — Phase 1 protocol groundwork
+
+**Asked:** continue phase by phase after Phase 0.
+
+**Produced:** `FrameReader` in `core/src/protocol.rs` with chunk-boundary, partial
+frame, invalid header, oversized length, and stalled-stream tests; installed nine
+audited open-source skills globally (Rust best practices/review, cargo-fuzz,
+Android Intent/JNI security, macOS SwiftPM packaging, threat modeling, TDD, and
+a hidden Trail of Bits Rust security review).
+
+**Findings:** none new. **Audit:** A-017 fixed; A-018 (real fuzzing) remains open.
+
+**Left open:** wire-codec decision (D-008), identity unification (A-002), and
+golden cross-language vectors (A-005).

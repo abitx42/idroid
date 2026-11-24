@@ -1237,6 +1237,80 @@ impl ProtocolMessage {
     }
 }
 
+/// Incremental reader for a stream of length-prefixed protocol frames.
+///
+/// `push` appends bytes received from the transport; `next_frame` yields one
+/// complete message at a time. The pending buffer is bounded so a peer cannot
+/// force unbounded allocation by sending a valid header and then stalling.
+#[derive(Debug, Default)]
+pub struct FrameReader {
+    buffer: Vec<u8>,
+}
+
+impl FrameReader {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Appends bytes received from the transport.
+    ///
+    /// The caller may use arbitrary chunk boundaries. Returns
+    /// [`ProtocolError::PayloadTooLarge`] if the pending bytes exceed twice
+    /// [`MAX_FRAME_SIZE`], which means the peer is not making frame progress.
+    pub fn push(&mut self, bytes: &[u8]) -> Result<(), ProtocolError> {
+        let pending = self.buffer.len().saturating_add(bytes.len());
+        if pending > MAX_FRAME_SIZE * 2 {
+            return Err(ProtocolError::PayloadTooLarge {
+                actual: pending,
+                maximum: MAX_FRAME_SIZE * 2,
+            });
+        }
+        self.buffer.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    /// Returns the next complete message, or `None` when more bytes are needed.
+    ///
+    /// A malformed header is reported immediately; a valid header whose payload
+    /// has not fully arrived yet is not an error.
+    pub fn next_frame(&mut self) -> Result<Option<ProtocolMessage>, ProtocolError> {
+        if self.buffer.len() < HEADER_SIZE {
+            return Ok(None);
+        }
+        if self.buffer[..MAGIC.len()] != MAGIC {
+            return Err(ProtocolError::InvalidMagic);
+        }
+        let payload_len = u32::from_le_bytes([
+            self.buffer[6],
+            self.buffer[7],
+            self.buffer[8],
+            self.buffer[9],
+        ]) as usize;
+        if payload_len > MAX_PAYLOAD_SIZE {
+            return Err(ProtocolError::PayloadTooLarge {
+                actual: payload_len,
+                maximum: MAX_PAYLOAD_SIZE,
+            });
+        }
+        let frame_len = HEADER_SIZE + payload_len;
+        if self.buffer.len() < frame_len {
+            return Ok(None);
+        }
+        let frame: Vec<u8> = self.buffer.drain(..frame_len).collect();
+        ProtocolMessage::decode(&frame).map(Some)
+    }
+
+    /// Number of bytes currently buffered but not yet decoded.
+    pub fn buffered_len(&self) -> usize {
+        self.buffer.len()
+    }
+
+    /// Drops any buffered bytes, for example after the transport reconnects.
+    pub fn clear(&mut self) {
+        self.buffer.clear();
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProtocolError {
     InvalidMagic,
@@ -1896,5 +1970,94 @@ mod tests {
                 value: 0xff,
             })
         );
+    }
+
+    #[test]
+    fn frame_reader_accepts_arbitrary_chunk_boundaries() {
+        let messages = [
+            ProtocolMessage::new(MessageBody::Hello {
+                device_id: DeviceId::new(1),
+            })
+            .expect("valid hello"),
+            ProtocolMessage::new(MessageBody::Heartbeat {
+                session_id: SessionId::new(2),
+                sequence: 7,
+            })
+            .expect("valid heartbeat"),
+        ];
+        let stream: Vec<u8> = messages
+            .iter()
+            .flat_map(|message| message.encode().expect("encodes"))
+            .collect();
+
+        let mut reader = FrameReader::new();
+        let mut decoded = Vec::new();
+        for chunk in stream.chunks(3) {
+            reader.push(chunk).expect("push");
+            while let Some(message) = reader.next_frame().expect("frame") {
+                decoded.push(message);
+            }
+        }
+
+        assert_eq!(decoded, messages);
+        assert_eq!(reader.buffered_len(), 0);
+    }
+
+    #[test]
+    fn frame_reader_waits_for_a_complete_frame() {
+        let message = ProtocolMessage::new(MessageBody::Reconnect {
+            session_id: SessionId::new(4),
+        })
+        .expect("valid reconnect");
+        let frame = message.encode().expect("encodes");
+
+        let mut reader = FrameReader::new();
+        reader.push(&frame[..HEADER_SIZE - 1]).expect("push header");
+        assert_eq!(reader.next_frame(), Ok(None));
+
+        reader.push(&frame[HEADER_SIZE - 1..]).expect("push rest");
+        assert_eq!(reader.next_frame(), Ok(Some(message)));
+        assert_eq!(reader.buffered_len(), 0);
+    }
+
+    #[test]
+    fn frame_reader_rejects_invalid_magic_and_oversized_lengths() {
+        let mut reader = FrameReader::new();
+        reader.push(&[0_u8; HEADER_SIZE]).expect("push");
+        assert_eq!(reader.next_frame(), Err(ProtocolError::InvalidMagic));
+
+        let mut header = Vec::new();
+        header.extend_from_slice(&MAGIC);
+        header.push(ProtocolVersion::V1.wire_value());
+        header.push(MessageKind::Heartbeat.wire_value());
+        header.extend_from_slice(
+            &u32::try_from(MAX_PAYLOAD_SIZE + 1)
+                .expect("fits u32")
+                .to_le_bytes(),
+        );
+
+        let mut reader = FrameReader::new();
+        reader.push(&header).expect("push");
+        assert_eq!(
+            reader.next_frame(),
+            Err(ProtocolError::PayloadTooLarge {
+                actual: MAX_PAYLOAD_SIZE + 1,
+                maximum: MAX_PAYLOAD_SIZE,
+            })
+        );
+    }
+
+    #[test]
+    fn frame_reader_bounds_stalled_streams() {
+        let mut reader = FrameReader::new();
+        let bytes = vec![0_u8; MAX_FRAME_SIZE * 2 + 1];
+        assert_eq!(
+            reader.push(&bytes),
+            Err(ProtocolError::PayloadTooLarge {
+                actual: MAX_FRAME_SIZE * 2 + 1,
+                maximum: MAX_FRAME_SIZE * 2,
+            })
+        );
+        assert_eq!(reader.buffered_len(), 0);
     }
 }
