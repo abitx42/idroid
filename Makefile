@@ -1,12 +1,32 @@
 SHELL := /bin/sh
 
-CARGO ?= cargo
 CARGO_LOCKED := --locked
 CARGO_WORKSPACE := --workspace --all-targets
+PINNED_CHANNEL := $(shell sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)
 
-.PHONY: test lint check-clock-source clean test-mac test-offline
+# Prefer the rustup toolchain selected by rust-toolchain.toml over a
+# Homebrew/system cargo on PATH. See research/audit.md A-014.
+RUSTUP_ACTIVE := $(shell rustup show active-toolchain 2>/dev/null | awk '{print $$1}')
+RUSTUP_BIN := $(HOME)/.rustup/toolchains/$(RUSTUP_ACTIVE)/bin
+ifneq ($(wildcard $(RUSTUP_BIN)/cargo),)
+CARGO ?= $(RUSTUP_BIN)/cargo
+export RUSTC := $(RUSTUP_BIN)/rustc
+export RUSTDOC := $(RUSTUP_BIN)/rustdoc
+else
+CARGO ?= cargo
+endif
 
-test:
+.PHONY: test lint check-clock-source check-toolchain clean test-mac test-offline research-check
+
+check-toolchain:
+	@actual=$$($(CARGO) --version | awk '{print $$2}'); \
+	if [ "$$actual" != "$(PINNED_CHANNEL)" ]; then \
+		printf '%s\n' "toolchain mismatch: rust-toolchain.toml pins $(PINNED_CHANNEL), but $(CARGO) reports $$actual." >&2; \
+		printf '%s\n' "Install the pinned toolchain (rustup toolchain install $(PINNED_CHANNEL)) or run via a rustup-managed cargo." >&2; \
+		exit 1; \
+	fi
+
+test: check-toolchain
 	$(CARGO) test $(CARGO_LOCKED) --offline $(CARGO_WORKSPACE)
 
 check-clock-source:
@@ -15,19 +35,25 @@ check-clock-source:
 		exit 1; \
 	fi
 
-lint: check-clock-source
+lint: check-toolchain check-clock-source
 	$(CARGO) fmt --all -- --check
 	$(CARGO) clippy $(CARGO_WORKSPACE) $(CARGO_LOCKED) -- -D warnings
+	python3 scripts/research_check.py
 
 clean:
 	$(CARGO) clean
 
-test-mac:
+test-mac: check-toolchain
 	@printf '%s\n' 'macOS check: running portable Rust core tests only.'
 	@printf '%s\n' 'Native macOS application tests do not exist yet; a passing result does not verify either app scaffold.'
 	$(CARGO) test $(CARGO_LOCKED) $(CARGO_WORKSPACE)
 	@printf '%s\n' 'macOS check complete: portable core only; native app behavior remains unverified.'
 
-test-offline:
+test-offline: check-toolchain
 	@printf '%s\n' 'NON-CLAIMING offline check: uses only the local Cargo cache and does not prove network independence or release readiness.'
 	$(CARGO) test $(CARGO_LOCKED) --offline $(CARGO_WORKSPACE)
+
+# Structural check for research/: unique ids, valid statuses, complete index.
+# It cannot verify that a conclusion is true, only that the memory is coherent.
+research-check:
+	python3 scripts/research_check.py
